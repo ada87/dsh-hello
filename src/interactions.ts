@@ -98,6 +98,7 @@ export class InteractionBroker {
     this.ctx.on('approval/request', async (...args: unknown[]) => {
       const req = args[0] as ApprovalRequestLike
       const next = args[1] as Next<'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'>
+      this.logger.info(`[dsh-hello] approval/request ${req.toolName} reason=${req.reason ?? '-'} session=${req.agent?.id ?? '-'}`)
       return this.handleApproval(req, next)
     })
     this.ctx.on('user-questions/request', async (...args: unknown[]) => {
@@ -284,10 +285,14 @@ export class InteractionBroker {
       return 'allowed-once'
     }
     const phoneHold = this.phoneWins()
-    if (!phoneHold && this.browserWins()) return next()
+    if (!phoneHold && this.browserWins()) {
+      this.logger.info(`[dsh-hello] approval ${req.toolName} went to the browser (no foreground phone with a live stream)`)
+      return next()
+    }
     if (!this.appCanAnswer()) {
       // Nothing can answer: keep dsh's fail-closed path instead of holding a
       // turn for two minutes for an app that is not connected.
+      this.logger.warn(`[dsh-hello] approval ${req.toolName} has no client to answer it`)
       return next()
     }
     if (req.signal?.aborted === true) return 'cancelled'
