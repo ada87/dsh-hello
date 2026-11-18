@@ -86,15 +86,10 @@ window.__ModuleLoader__.load({
       nav: 'DSH Hello',
       title: 'DSH Hello',
       pairingCode: '配对码',
-      lockLabel: '允许新设备连接',
-      lockHintOff: '关闭后不再接受新设备配对；已连接的设备不受影响',
+      lockMode: '锁定',
       lockHintOn: '已锁定：新设备无法配对，已连接的设备照常使用',
-      lockAction: '锁定',
-      unlockAction: '解除锁定',
       oneTimeMode: '一次性',
       fixedMode: '永久性',
-      oneTimeHint: '一次性码过期后自动换新码',
-      fixedHint: '永久码不会过期；建议只在可信网络使用',
       remaining: '剩余 {time}',
       reset: '重置',
       modify: '修改',
@@ -132,15 +127,10 @@ window.__ModuleLoader__.load({
       nav: 'DSH Hello',
       title: 'DSH Hello',
       pairingCode: 'Pairing code',
-      lockLabel: 'Accept new devices',
-      lockHintOff: 'Turn this off to stop accepting new devices; paired devices keep working',
+      lockMode: 'Lock',
       lockHintOn: 'Locked: new devices cannot pair, while paired devices keep working',
-      lockAction: 'Lock',
-      unlockAction: 'Unlock',
       oneTimeMode: 'One-time',
       fixedMode: 'Permanent',
-      oneTimeHint: 'A new code is generated when this one expires',
-      fixedHint: 'The permanent code never expires; use it only on a trusted network',
       remaining: '{time} left',
       reset: 'Reset',
       modify: 'Change',
@@ -310,6 +300,21 @@ window.__ModuleLoader__.load({
             setDialogError(null)
             setDialog('reset')
           }
+          /**
+           * One three-way switch: Lock, One-time, Permanent. Unlocking restores
+           * whichever code mode was in force, so switching from Lock to another
+           * mode continues into that mode's dialog when it needs input.
+           */
+          const chooseMode = async (next) => {
+            if (busy || data === null) return
+            if (next === 'lock') {
+              if (!locked) await setLocked(true)
+              return
+            }
+            if (locked) await setLocked(false)
+            if (next === 'one-time' && fixed) openReset()
+            if (next === 'permanent' && !fixed) openPermanent()
+          }
           const confirmPermanent = async () => {
             const code = password.trim()
             if (!/^\d{4}$/.test(code)) {
@@ -400,58 +405,58 @@ window.__ModuleLoader__.load({
 
             h('div', { className: 'dd-row' },
               h('div', { className: 'dd-rowText' },
-                h('span', { className: 'dd-label' }, t('lockLabel')),
-                h('span', { className: 'dd-desc' }, locked ? t('lockHintOn') : t('lockHintOff')),
-              ),
-              h('div', { className: 'dd-control' },
-                h(Button, {
-                  variant: locked ? 'primary' : 'outline',
-                  size: 'sm',
-                  disabled: busy || data === null,
-                  onClick: () => { void setLocked(!locked) },
-                }, locked ? t('unlockAction') : t('lockAction')),
-              ),
-            ),
-
-            h('div', { className: 'dd-row' },
-              h('div', { className: 'dd-rowText' },
                 h('span', { className: 'dd-label' }, t('pairingCode')),
-                h('span', { className: 'dd-desc' }, fixed ? t('fixedHint') : t('oneTimeHint')),
               ),
               h('div', { className: 'dd-control' },
                 h('div', { className: 'dd-segment' },
                   h('button', {
                     type: 'button',
-                    className: 'dd-segmentButton' + (fixed ? '' : ' is-active'),
+                    className: 'dd-segmentButton' + (locked ? ' is-active' : ''),
                     disabled: busy || data === null,
-                    onClick: () => { if (fixed) openReset() },
+                    onClick: () => { void chooseMode('lock') },
+                  }, t('lockMode')),
+                  h('button', {
+                    type: 'button',
+                    className: 'dd-segmentButton' + (!locked && !fixed ? ' is-active' : ''),
+                    disabled: busy || data === null,
+                    onClick: () => { void chooseMode('one-time') },
                   }, t('oneTimeMode')),
                   h('button', {
                     type: 'button',
-                    className: 'dd-segmentButton' + (fixed ? ' is-active' : ''),
+                    className: 'dd-segmentButton' + (!locked && fixed ? ' is-active' : ''),
                     disabled: busy || data === null,
-                    onClick: () => { if (!fixed) openPermanent() },
+                    onClick: () => { void chooseMode('permanent') },
                   }, t('fixedMode')),
                 ),
-                h('span', { className: 'dd-code' }, data?.formatted ?? '…'),
-                fixed
-                  ? h(Button, {
-                    variant: 'outline',
-                    size: 'sm',
-                    disabled: busy,
-                    onClick: openPermanent,
-                  }, t('modify'))
-                  : h('span', { className: 'dd-countdown' }, left.length > 0 ? t('remaining', { time: left }) : ''),
               ),
             ),
 
-            h('div', { className: 'dd-block' },
-              h('span', { className: 'dd-label' }, t('qrTitle')),
-              typeof data?.qrSvg === 'string' && data.qrSvg.startsWith('<svg')
-                ? h('div', { className: 'dd-qr-img', dangerouslySetInnerHTML: { __html: data.qrSvg } })
-                : h('span', { className: 'dd-desc' }, t('qrFailed')),
-              h('span', { className: 'dd-desc' }, t('qrHint')),
-            ),
+            locked
+              ? h('div', { className: 'dd-block' },
+                h('span', { className: 'dd-desc' }, t('lockHintOn')),
+              )
+              : [
+                h('div', { className: 'dd-row', key: 'code' },
+                  h('span', { className: 'dd-code' }, data?.formatted ?? '…'),
+                  h('div', { className: 'dd-control' },
+                    fixed
+                      ? h(Button, {
+                        variant: 'outline',
+                        size: 'sm',
+                        disabled: busy,
+                        onClick: openPermanent,
+                      }, t('modify'))
+                      : h('span', { className: 'dd-countdown' }, left.length > 0 ? t('remaining', { time: left }) : ''),
+                  ),
+                ),
+                h('div', { className: 'dd-block', key: 'qr' },
+                  h('span', { className: 'dd-label' }, t('qrTitle')),
+                  typeof data?.qrSvg === 'string' && data.qrSvg.startsWith('<svg')
+                    ? h('div', { className: 'dd-qr-img', dangerouslySetInnerHTML: { __html: data.qrSvg } })
+                    : h('span', { className: 'dd-desc' }, t('qrFailed')),
+                  h('span', { className: 'dd-desc' }, t('qrHint')),
+                ),
+              ],
 
             h('div', { className: 'dd-block' },
               h('span', { className: 'dd-label' }, t('devices')),
