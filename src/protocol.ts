@@ -316,7 +316,7 @@ export interface ApprovalItem {
   preview?: ApprovalPreview
 }
 
-export type ApprovalDecision = 'allow' | 'deny' | 'always'
+export type ApprovalDecision = 'allow' | 'deny' | 'always' | 'later'
 
 export interface ApprovalResponse {
   accepted: true

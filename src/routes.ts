@@ -1129,8 +1129,8 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
     handler: (rc) => {
       const body = rc.body as { decision?: unknown } | undefined
       const decision = body?.decision
-      if (decision !== 'allow' && decision !== 'deny' && decision !== 'always') {
-        throw new HttpError(400, 'bad-decision', 'decision must be allow, deny, or always')
+      if (decision !== 'allow' && decision !== 'deny' && decision !== 'always' && decision !== 'later') {
+        throw new HttpError(400, 'bad-decision', 'decision must be allow, deny, always, or later')
       }
       const item = deps.interactions.decideApproval(rc.params.id!, decision as ApprovalDecision)
       if (item === undefined) throw new HttpError(404, 'approval-not-found', 'the approval is no longer pending')

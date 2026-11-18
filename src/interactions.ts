@@ -218,7 +218,9 @@ export class InteractionBroker {
     if (decision === 'always' && this.config.allowSessionWideGrants) {
       this.grants.add(grantKey(pending.sessionId, pending.toolName))
     }
-    pending.resolve(decision)
+    // `later` hands the request to dsh's own listeners so a browser can render
+    // it; the app only reports that it passed the decision on.
+    pending.resolve(decision === 'later' ? 'timeout' : decision)
     this.hub.broadcast('approval-resolved', {
       id,
       sessionId: pending.sessionId,
