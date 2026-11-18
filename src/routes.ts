@@ -1,0 +1,1402 @@
+import { open } from 'node:fs/promises'
+import {
+  agentPresetsAvailable,
+  createWorkspace,
+  currentSessionModel,
+  listAgentPresets,
+  listWorkspaces,
+  modelCatalog,
+  modelsAvailable,
+  renameWorkspace,
+  selectSessionModel,
+  setSessionArchived,
+  setSessionPinned,
+  uploadAttachment,
+  uploadsAvailable,
+  workspaceRenameAvailable,
+  workspacesAvailable,
+  type ModelSelection,
+} from './catalogs.js'
+import type { Config } from './config.js'
+import type { DeviceStore } from './devices.js'
+import { listWorkspaceFiles, listWorkspaceFilesByWorkspace, readWorkspaceFile, readWorkspaceFileByWorkspace, resolveWorkspaceBinary } from './files.js'
+import type { HostContext } from './host.js'
+import { HttpError, markStreaming, sendJson, sendNoContent, startSse, writeSse } from './http.js'
+import type { HttpRouter, RouteContext } from './http.js'
+import type { InteractionBroker } from './interactions.js'
+import type { PairingManager } from './pairing.js'
+import type { PushManager } from './push.js'
+import { parseReadState, tagReadService } from './read-state.js'
+import type {
+  ApprovalDecision,
+  HealthResponse,
+  PairRequest,
+  PairResponse,
+  ServerFacts,
+  SessionListResponse,
+  SessionStateResponse,
+  SessionTranscriptResponse,
+} from './protocol.js'
+import { PROTOCOL_VERSION } from './protocol.js'
+import type { SessionFacade } from './sessions.js'
+import {
+  deleteSchedule,
+  editSchedule,
+  listSchedules,
+  runSchedule,
+  scheduleActionsAvailable,
+  scheduleHistory,
+  scheduleHistoryAvailable,
+  schedulesAvailable,
+  sessionScheduleMarks,
+  viewSchedule,
+} from './schedules.js'
+import { speechCatalog, transcribeSpeech } from './speech.js'
+import type { SseHub } from './streams.js'
+import type { TerminalEvent, TerminalManager } from './terminal.js'
+import { newId, shortError } from './util.js'
+
+export interface RouteDependencies {
+  config: Config
+  ctx: HostContext
+  devices: DeviceStore
+  pairing: PairingManager
+  hub: SseHub
+  interactions: InteractionBroker
+  push: PushManager
+  sessions: SessionFacade
+  terminals: TerminalManager
+  logger: {
+    info(message: string): void
+    warn(message: string): void
+    debug?(message: string): void
+  }
+  version: { version: string | null; compatible: boolean }
+  pluginVersion: string
+}
+
+export function registerRoutes(router: HttpRouter, deps: RouteDependencies): void {
+  const { config } = deps
+
+  router.add({
+    method: 'GET',
+    pattern: '/health',
+    auth: 'public',
+    handler: (rc) => {
+      const facts = serverFacts(deps)
+      const response: HealthResponse = {
+        ok: true,
+        ...facts,
+        pairingOpen: deps.pairing.status().pairingOpen,
+        pairingFixed: deps.pairing.status().fixed,
+        deviceCount: deps.devices.count(),
+        features: features(deps),
+        time: Date.now(),
+      }
+      sendJson(rc.res, 200, response)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/admin/data',
+    auth: 'public',
+    handler: async (rc) => {
+      if (!adminAuthorized(deps, rc)) throw new HttpError(401, 'admin-unauthorized', 'open this page from an authenticated dsh browser')
+      sendJson(rc.res, 200, await adminData(deps))
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/admin/pair-code',
+    auth: 'public',
+    handler: async (rc) => {
+      if (!adminAuthorized(deps, rc)) throw new HttpError(401, 'admin-unauthorized', 'open this page from an authenticated dsh browser')
+      const body = (rc.body ?? {}) as { action?: unknown; code?: unknown }
+      try {
+        if (body.action === 'fixed') {
+          if (typeof body.code !== 'string') throw new HttpError(400, 'bad-code', 'code is required')
+          await deps.pairing.setFixedCode(body.code)
+        } else if (body.action === 'auto' || body.action === 'rotate') {
+          if (body.action === 'auto') await deps.pairing.setFixedCode(null)
+          else deps.pairing.rotate()
+        } else {
+          throw new HttpError(400, 'bad-action', 'action must be rotate, fixed, or auto')
+        }
+      } catch (error) {
+        if (error instanceof HttpError) throw error
+        throw new HttpError(400, 'bad-code', error instanceof Error ? error.message : String(error))
+      }
+      sendJson(rc.res, 200, await adminData(deps))
+    },
+  })
+
+  router.add({
+    method: 'DELETE',
+    pattern: '/admin/devices/:id',
+    auth: 'public',
+    handler: async (rc) => {
+      if (!adminAuthorized(deps, rc)) throw new HttpError(401, 'admin-unauthorized', 'open this page from an authenticated dsh browser')
+      const removed = await deps.devices.revoke(rc.params.id!)
+      if (!removed) throw new HttpError(404, 'device-not-found', 'no such device')
+      deps.hub.closeDevice(rc.params.id!)
+      sendJson(rc.res, 200, await adminData(deps))
+    },
+  })
+
+  router.add({
+    method: 'PUT',
+    pattern: '/admin/devices/:id',
+    auth: 'public',
+    handler: async (rc) => {
+      if (!adminAuthorized(deps, rc)) throw new HttpError(401, 'admin-unauthorized', 'open this page from an authenticated dsh browser')
+      const body = (rc.body ?? {}) as { name?: unknown }
+      const name = typeof body.name === 'string' ? body.name.trim().slice(0, 120) : ''
+      if (name.length === 0) throw new HttpError(400, 'bad-device-name', 'a non-empty device name is required')
+      const renamed = await deps.devices.rename(rc.params.id!, name)
+      if (!renamed) throw new HttpError(404, 'device-not-found', 'no such device')
+      sendJson(rc.res, 200, await adminData(deps))
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/pair',
+    auth: 'public',
+    handler: (rc) => {
+      const status = deps.pairing.status()
+      sendJson(rc.res, 200, {
+        server: serverFacts(deps),
+        features: features(deps),
+        pairing: { open: status.pairingOpen },
+      })
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/pair/code',
+    auth: 'public',
+    handler: async (rc) => {
+      assertLoopback(rc)
+      const current = deps.pairing.current()
+      const origin = serverFacts(deps).origin ?? ''
+      const payload = JSON.stringify({
+        v: 1,
+        url: `${origin}${config.basePath}`,
+        code: current.code,
+      })
+      const qr = await renderQr(payload)
+      sendJson(rc.res, 200, {
+        code: current.code,
+        formatted: current.formatted,
+        expiresAt: current.expiresAt,
+        payload,
+        qr,
+      })
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/pair/code',
+    auth: 'public',
+    handler: (rc) => {
+      assertLoopback(rc)
+      const rotated = deps.pairing.rotate()
+      sendJson(rc.res, 200, rotated)
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/pair',
+    auth: 'public',
+    handler: async (rc) => {
+      const body = rc.body as Partial<PairRequest> | undefined
+      if (body === undefined || typeof body.code !== 'string') {
+        throw new HttpError(400, 'bad-pair-request', 'pairing requires a code')
+      }
+      const verification = deps.pairing.verify(body.code, rc.clientAddress)
+      if (!verification.ok) {
+        const message = verification.reason === 'rate-limited'
+          ? 'too many pairing attempts from this address'
+          : verification.reason === 'expired'
+            ? 'the pairing code has expired; read the new code from the dsh terminal'
+            : 'the pairing code is invalid'
+        throw new HttpError(verification.reason === 'rate-limited' ? 429 : 401, `pair-${verification.reason}`, message)
+      }
+      const authority = rc.authority
+      if (authority.length === 0) throw new HttpError(400, 'missing-host', 'the Host header is required')
+      const token = randomPairingToken()
+      const device = await deps.devices.pair({
+        token,
+        deviceName: sanitizeName(body.deviceName),
+        devicePublicKey: typeof body.devicePublicKey === 'string' ? body.devicePublicKey : undefined,
+        platform: body.platform,
+        appVersion: body.appVersion,
+        authority,
+      })
+      const response: PairResponse = {
+        deviceId: device.deviceId,
+        token,
+        deviceName: device.deviceName,
+        pairedAt: device.pairedAt,
+        server: serverFacts(deps),
+        features: features(deps),
+      }
+      deps.logger.info(`[dsh-hello] paired device "${device.deviceName}" (${device.deviceId.slice(0, 12)}…) from ${rc.clientAddress}`)
+      sendJson(rc.res, 201, response)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/devices',
+    auth: 'device',
+    handler: (rc) => {
+      sendJson(rc.res, 200, {
+        current: rc.device?.deviceId,
+        items: deps.devices.list(),
+      })
+    },
+  })
+
+  router.add({
+    method: 'DELETE',
+    pattern: '/devices/:id',
+    auth: 'device',
+    handler: async (rc) => {
+      const removed = await deps.devices.revoke(rc.params.id!)
+      if (!removed) throw new HttpError(404, 'device-not-found', 'no such device')
+      deps.hub.closeDevice(rc.params.id!)
+      sendNoContent(rc.res)
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/push/register',
+    auth: 'device',
+    handler: async (rc) => {
+      const body = rc.body as { provider?: unknown; token?: unknown } | undefined
+      const provider = body?.provider
+      const token = body?.token
+      if (provider !== 'fcm' && provider !== 'apns') {
+        throw new HttpError(400, 'bad-push-provider', 'provider must be "fcm" or "apns"')
+      }
+      if (typeof token !== 'string' || token.length < 8 || token.length > 4096) {
+        throw new HttpError(400, 'bad-push-token', 'token must be a non-empty push token')
+      }
+      const updated = await deps.devices.setPush(rc.device!.deviceId, { provider, token, updatedAt: Date.now() })
+      if (!updated) throw new HttpError(404, 'device-not-found', 'no such device')
+      await deps.push.registerDevice(rc.device!.deviceId, provider, token)
+      sendJson(rc.res, 200, { accepted: true, provider })
+    },
+  })
+
+  router.add({
+    method: 'PUT',
+    pattern: '/push/subscriptions',
+    auth: 'device',
+    handler: async (rc) => {
+      const body = rc.body as { approval?: unknown; question?: unknown; turnEnd?: unknown } | undefined
+      if (typeof body?.approval !== 'boolean' || typeof body.question !== 'boolean' || typeof body.turnEnd !== 'boolean') {
+        throw new HttpError(400, 'bad-push-subscriptions', 'approval, question and turnEnd must be booleans')
+      }
+      const subscriptions = { approval: body.approval, question: body.question, turnEnd: body.turnEnd }
+      const updated = await deps.devices.setSubscriptions(rc.device!.deviceId, subscriptions)
+      if (!updated) throw new HttpError(404, 'device-not-found', 'no such device')
+      sendJson(rc.res, 200, { accepted: true, subscriptions })
+    },
+  })
+
+  router.add({
+    method: 'DELETE',
+    pattern: '/push',
+    auth: 'device',
+    handler: async (rc) => {
+      await deps.devices.clearPush(rc.device!.deviceId)
+      await deps.push.unregisterDevice(rc.device!.deviceId)
+      sendNoContent(rc.res)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/speech',
+    auth: 'device',
+    handler: (rc) => {
+      sendJson(rc.res, 200, speechCatalog(deps.ctx))
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/speech/transcribe',
+    auth: 'device',
+    // 4 MiB WAV becomes roughly 5.33 MiB of canonical base64 plus JSON.
+    maxBodyBytes: 6 * 1024 * 1024,
+    handler: async (rc) => {
+      const body = rc.body as { audioBase64?: unknown; providerId?: unknown; language?: unknown } | undefined
+      if (body === undefined || typeof body.audioBase64 !== 'string') {
+        throw new HttpError(400, 'empty-audio', 'audioBase64 is required')
+      }
+      const result = await transcribeSpeech(deps.ctx, {
+        audioBase64: body.audioBase64,
+        ...(typeof body.providerId === 'string' && body.providerId.length > 0 ? { providerId: body.providerId } : {}),
+        ...(typeof body.language === 'string' && body.language.length > 0 ? { language: body.language } : {}),
+      }, rc.signal)
+      sendJson(rc.res, 200, result)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/schedules',
+    auth: 'device',
+    handler: async (rc) => {
+      const result = await listSchedules(deps.ctx, rc.signal)
+      sendJson(rc.res, 200, result)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/schedule-marks',
+    auth: 'device',
+    handler: async (rc) => {
+      sendJson(rc.res, 200, await sessionScheduleMarks(deps.ctx, rc.signal))
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/schedules/:id',
+    auth: 'device',
+    handler: async (rc) => {
+      const result = await viewSchedule(deps.ctx, rc.params.id!, rc.signal)
+      if (result === undefined) throw new HttpError(404, 'schedule-unavailable', 'the Host has no schedule service')
+      const code = scheduleCode(result)
+      if (code === 'schedule_not_found') throw new HttpError(404, 'schedule-not-found', 'the task no longer exists')
+      sendJson(rc.res, 200, result)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/schedules/:id/history',
+    auth: 'device',
+    handler: async (rc) => {
+      const rawLimit = rc.query.get('limit')
+      const parsed = rawLimit === null ? 20 : Number(rawLimit)
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
+        throw new HttpError(400, 'bad-limit', 'limit must be an integer from 1 to 100')
+      }
+      const before = rc.query.get('before') ?? undefined
+      const result = await scheduleHistory(deps.ctx, rc.params.id!, parsed, before, rc.signal)
+      if (result === undefined) throw new HttpError(404, 'schedule-unavailable', 'the Host has no schedule service')
+      const code = scheduleCode(result)
+      if (code === 'schedule_not_found') throw new HttpError(404, 'schedule-not-found', 'the task no longer exists')
+      if (code === 'delivery_cursor_not_found') throw new HttpError(404, 'delivery-cursor-not-found', 'the history cursor is no longer valid')
+      sendJson(rc.res, 200, result)
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/schedules/:id/run',
+    auth: 'device',
+    handler: async (rc) => {
+      const result = await runSchedule(deps.ctx, rc.params.id!, rc.signal)
+      if (result === undefined) throw new HttpError(404, 'schedule-unavailable', 'the Host has no schedule service')
+      const code = scheduleCode(result)
+      if (code === 'schedule_not_found') throw new HttpError(404, 'schedule-not-found', 'the task no longer exists')
+      if (code === 'schedule_execution_pending') {
+        throw new HttpError(409, 'schedule-execution-pending', 'the task is already running or cooling down')
+      }
+      sendJson(rc.res, 200, result)
+    },
+  })
+
+  router.add({
+    method: 'PUT',
+    pattern: '/schedules/:id',
+    auth: 'device',
+    handler: async (rc) => {
+      const body = (rc.body ?? {}) as { active?: unknown; expectedUpdatedAt?: unknown }
+      if (typeof body.active !== 'boolean') {
+        throw new HttpError(400, 'bad-schedule-patch', 'active must be a boolean')
+      }
+      const expectedUpdatedAt = typeof body.expectedUpdatedAt === 'string' || body.expectedUpdatedAt === null
+        ? body.expectedUpdatedAt
+        : undefined
+      const result = await editSchedule(
+        deps.ctx,
+        rc.params.id!,
+        { active: body.active },
+        expectedUpdatedAt,
+        rc.signal,
+      )
+      if (result === undefined) throw new HttpError(404, 'schedule-unavailable', 'the Host has no schedule service')
+      const code = scheduleCode(result)
+      if (code === 'schedule_not_found') throw new HttpError(404, 'schedule-not-found', 'the task no longer exists')
+      if (code === 'schedule_conflict') throw new HttpError(409, 'schedule-conflict', 'the task changed on the Host')
+      sendJson(rc.res, 200, result)
+    },
+  })
+
+  router.add({
+    method: 'DELETE',
+    pattern: '/schedules/:id',
+    auth: 'device',
+    handler: async (rc) => {
+      const body = (rc.body ?? {}) as { expectedUpdatedAt?: unknown }
+      const fromBody = body.expectedUpdatedAt
+      const fromQuery = rc.query.get('expectedUpdatedAt') ?? undefined
+      const expectedUpdatedAt = typeof fromBody === 'string' || fromBody === null
+        ? fromBody
+        : fromQuery
+      const result = await deleteSchedule(deps.ctx, rc.params.id!, expectedUpdatedAt, rc.signal)
+      if (result === undefined) throw new HttpError(404, 'schedule-unavailable', 'the Host has no schedule service')
+      const code = scheduleCode(result)
+      if (code === 'schedule_not_found') throw new HttpError(404, 'schedule-not-found', 'the task no longer exists')
+      if (code === 'schedule_conflict') throw new HttpError(409, 'schedule-conflict', 'the task changed on the Host')
+      sendJson(rc.res, 200, result)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/sessions',
+    auth: 'device',
+    handler: async (rc) => {
+      const items = await deps.sessions.list(rc.signal)
+      const response: SessionListResponse = { items }
+      sendJson(rc.res, 200, response)
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/sessions',
+    auth: 'device',
+    handler: async (rc) => {
+      const body = (rc.body ?? {}) as { cwd?: unknown; workspaceId?: unknown; agentPreset?: unknown }
+      const created = await deps.sessions.create({
+        ...(typeof body.cwd === 'string' && body.cwd.length > 0 ? { cwd: body.cwd } : {}),
+        ...(typeof body.workspaceId === 'string' && body.workspaceId.length > 0 ? { workspaceId: body.workspaceId } : {}),
+        ...(typeof body.agentPreset === 'string' && body.agentPreset.length > 0 ? { agentPreset: body.agentPreset } : {}),
+      })
+      sendJson(rc.res, 201, created)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/workspaces/:id/raw',
+    auth: 'device',
+    handler: async (rc) => {
+      const path = rc.query.get('path')
+      if (path === null || path.length === 0) throw new HttpError(400, 'empty-path', 'path is required')
+      const file = await resolveWorkspaceBinary(deps.ctx, { workspaceId: rc.params.id! }, path, rc.signal)
+      await sendBinary(rc, file)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/sessions/:id/raw',
+    auth: 'device',
+    handler: async (rc) => {
+      const path = rc.query.get('path')
+      if (path === null || path.length === 0) throw new HttpError(400, 'empty-path', 'path is required')
+      const file = await resolveWorkspaceBinary(deps.ctx, { sessionId: rc.params.id! }, path, rc.signal)
+      await sendBinary(rc, file)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/workspaces/:id/files',
+    auth: 'device',
+    handler: async (rc) => {
+      const response = await listWorkspaceFilesByWorkspace(
+        deps.ctx,
+        rc.params.id!,
+        rc.query.get('path') ?? '',
+        rc.signal,
+      )
+      sendJson(rc.res, 200, response)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/workspaces/:id/file',
+    auth: 'device',
+    handler: async (rc) => {
+      const path = rc.query.get('path')
+      if (path === null || path.length === 0) throw new HttpError(400, 'empty-path', 'path is required')
+      const offset = numberParam(rc.query.get('offset')) ?? 0
+      const response = await readWorkspaceFileByWorkspace(deps.ctx, rc.params.id!, path, rc.signal, offset)
+      sendJson(rc.res, 200, response)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/workspaces',
+    auth: 'device',
+    handler: (rc) => {
+      sendJson(rc.res, 200, { items: listWorkspaces(deps.ctx) })
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/workspaces',
+    auth: 'device',
+    handler: async (rc) => {
+      const body = (rc.body ?? {}) as { path?: unknown; title?: unknown }
+      if (typeof body.path !== 'string' || body.path.trim().length === 0) {
+        throw new HttpError(400, 'workspace-invalid-path', 'a non-empty absolute directory path is required')
+      }
+      const title = typeof body.title === 'string' && body.title.trim().length > 0
+        ? body.title.trim().slice(0, 120)
+        : undefined
+      try {
+        const workspace = await createWorkspace(deps.ctx, body.path.trim(), title)
+        sendJson(rc.res, 201, { workspace })
+      } catch (error) {
+        throw new HttpError(400, 'workspace-create-failed', shortError(error))
+      }
+    },
+  })
+
+  router.add({
+    method: 'PUT',
+    pattern: '/workspaces/:id',
+    auth: 'device',
+    handler: async (rc) => {
+      const body = (rc.body ?? {}) as { title?: unknown }
+      if (typeof body.title !== 'string' || body.title.trim().length === 0) {
+        throw new HttpError(400, 'workspace-invalid-title', 'a non-empty workspace title is required')
+      }
+      const result = await renameWorkspace(deps.ctx, rc.params.id!, body.title.trim().slice(0, 120))
+      if ('code' in result) {
+        throw new HttpError(404, 'workspace-not-found', 'the workspace no longer exists')
+      }
+      sendJson(rc.res, 200, result)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/agent-presets',
+    auth: 'device',
+    handler: async (rc) => {
+      sendJson(rc.res, 200, await listAgentPresets(deps.ctx))
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/models',
+    auth: 'device',
+    handler: async (rc) => {
+      sendJson(rc.res, 200, await modelCatalog(deps.ctx))
+    },
+  })
+
+  // Read watermarks are owned by dsh-tag (colour and weight share one layer);
+  // this authenticated route is the phone's way in. Without dsh-tag the
+  // feature is simply absent, which the app sees through `features.readState`.
+  router.add({
+    method: 'GET',
+    pattern: '/read-state',
+    auth: 'device',
+    handler: (rc) => {
+      const tag = tagReadService(deps.ctx)
+      if (tag === undefined) throw new HttpError(404, 'read-state-unavailable', 'install dsh-tag to share read state')
+      sendJson(rc.res, 200, { sessions: tag.reads(), serverTime: Date.now() })
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/read-state',
+    auth: 'device',
+    handler: async (rc) => {
+      const tag = tagReadService(deps.ctx)
+      if (tag === undefined) throw new HttpError(404, 'read-state-unavailable', 'install dsh-tag to share read state')
+      const body = (rc.body ?? {}) as { sessions?: unknown }
+      const sessions = parseReadState(body.sessions)
+      if (sessions === undefined) {
+        throw new HttpError(400, 'bad-read-state', 'sessions must be an object of {readAt, unread, at}')
+      }
+      sendJson(rc.res, 200, { sessions: tag.mergeReads(sessions), serverTime: Date.now() })
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/sessions/:id/model',
+    auth: 'device',
+    handler: async (rc) => {
+      const catalog = await modelCatalog(deps.ctx)
+      const resolved = await deps.ctx.sessionController.resolveAgent(rc.params.id!)
+      if (!('agent' in resolved) || resolved.agent === undefined) {
+        throw new HttpError(404, 'agent-not-found', 'the session has no live agent')
+      }
+      const agent = resolved.agent as unknown as Parameters<typeof currentSessionModel>[0]
+      sendJson(rc.res, 200, { selection: currentSessionModel(agent, catalog.default) })
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/sessions/:id/model',
+    auth: 'device',
+    handler: async (rc) => {
+      const body = (rc.body ?? {}) as { provider?: unknown; model?: unknown; reasoningEffort?: unknown }
+      if (typeof body.provider !== 'string' || body.provider.length === 0 || typeof body.model !== 'string' || body.model.length === 0) {
+        throw new HttpError(400, 'bad-model-selection', 'provider and model are required')
+      }
+      const selection: ModelSelection = {
+        provider: body.provider,
+        model: body.model,
+        ...(typeof body.reasoningEffort === 'string' && body.reasoningEffort.length > 0 ? { reasoningEffort: body.reasoningEffort } : {}),
+      }
+      const resolved = await deps.ctx.sessionController.resolveAgent(rc.params.id!)
+      if (!('agent' in resolved) || resolved.agent === undefined) {
+        throw new HttpError(404, 'agent-not-found', 'the session has no live agent')
+      }
+      try {
+        await selectSessionModel(deps.ctx, resolved.agent as unknown as Parameters<typeof selectSessionModel>[1], selection)
+      } catch (error) {
+        throw new HttpError(400, 'model-selection-rejected', error instanceof Error ? error.message : String(error))
+      }
+      sendJson(rc.res, 200, { selection })
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/sessions/:id/transcript',
+    auth: 'device',
+    handler: async (rc) => {
+      const beforeSeq = numberParam(rc.query.get('beforeSeq'))
+      const maxMessages = numberParam(rc.query.get('maxMessages'))
+      const response: SessionTranscriptResponse = await deps.sessions.transcript(rc.params.id!, {
+        ...(beforeSeq === undefined ? {} : { beforeSeq }),
+        ...(maxMessages === undefined ? {} : { maxMessages }),
+      }, rc.signal)
+      sendJson(rc.res, 200, response)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/sessions/:id/files',
+    auth: 'device',
+    handler: async (rc) => {
+      const response = await listWorkspaceFiles(
+        deps.ctx,
+        rc.params.id!,
+        rc.query.get('path') ?? '',
+        rc.signal,
+      )
+      sendJson(rc.res, 200, response)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/sessions/:id/file',
+    auth: 'device',
+    handler: async (rc) => {
+      const path = rc.query.get('path')
+      if (path === null || path.length === 0) throw new HttpError(400, 'empty-path', 'path is required')
+      const offset = numberParam(rc.query.get('offset')) ?? 0
+      const response = await readWorkspaceFile(deps.ctx, rc.params.id!, path, rc.signal, offset)
+      sendJson(rc.res, 200, response)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/sessions/:id/state',
+    auth: 'device',
+    handler: async (rc) => {
+      const response: SessionStateResponse = await deps.sessions.state(rc.params.id!, rc.signal)
+      sendJson(rc.res, 200, response)
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/sessions/:id/prompt',
+    auth: 'device',
+    handler: async (rc) => {
+      const body = rc.body as { text?: unknown; requestId?: unknown; mode?: unknown; clientTimeZone?: unknown; attachments?: unknown } | undefined
+      if (body === undefined || typeof body.text !== 'string') {
+        throw new HttpError(400, 'bad-prompt', 'text is required')
+      }
+      const attachments = Array.isArray(body.attachments)
+        ? body.attachments
+            .filter((item): item is { receiptId: string } =>
+              typeof item === 'object' && item !== null
+              && typeof (item as { receiptId?: unknown }).receiptId === 'string'
+              && (item as { receiptId: string }).receiptId.length > 0)
+            .map(item => item.receiptId)
+        : []
+      if (body.text.trim().length === 0 && attachments.length === 0) {
+        throw new HttpError(400, 'empty-prompt', 'text or at least one attachment is required')
+      }
+      const mode = body.mode === 'steer' ? 'steer' : 'queue'
+      const requestId = typeof body.requestId === 'string' && body.requestId.length > 0 ? body.requestId : newId()
+      const accepted = await deps.sessions.prompt(rc.params.id!, {
+        requestId,
+        text: body.text,
+        mode,
+        ...(attachments.length > 0 ? { attachments } : {}),
+        ...(typeof body.clientTimeZone === 'string' ? { clientTimeZone: body.clientTimeZone } : {}),
+      }, rc.signal)
+      sendJson(rc.res, 202, accepted)
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/sessions/:id/uploads',
+    auth: 'device',
+    rawBody: true,
+    // dsh enforces its own per-file and per-image budgets; this only bounds the wire read.
+    maxBodyBytes: 30 * 1024 * 1024,
+    handler: async (rc) => {
+      const bytes = rc.body
+      if (!Buffer.isBuffer(bytes) || bytes.byteLength === 0) {
+        throw new HttpError(400, 'empty-upload', 'the request body must carry the file bytes')
+      }
+      const kind = rc.query.get('kind') === 'image' ? 'image' : 'file'
+      const name = rc.query.get('name') ?? undefined
+      const mediaType = rc.query.get('mediaType') ?? undefined
+      try {
+        const receipt = await uploadAttachment(deps.ctx, rc.params.id!, { kind, ...(name === undefined ? {} : { name }), ...(mediaType === undefined ? {} : { mediaType }), bytes })
+        sendJson(rc.res, 201, receipt)
+      } catch (error) {
+        throw new HttpError(400, 'upload-rejected', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/sessions/:id/rename',
+    auth: 'device',
+    handler: async (rc) => {
+      const body = rc.body as { title?: unknown } | undefined
+      if (body === undefined || typeof body.title !== 'string' || body.title.trim().length === 0) {
+        throw new HttpError(400, 'empty-title', 'title must be non-empty')
+      }
+      const renamed = await deps.sessions.rename(rc.params.id!, body.title)
+      sendJson(rc.res, 200, renamed)
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/sessions/:id/fork',
+    auth: 'device',
+    handler: async (rc) => {
+      const body = (rc.body ?? {}) as { atSeq?: unknown }
+      if (body.atSeq !== undefined && (!Number.isSafeInteger(body.atSeq) || (body.atSeq as number) < 0)) {
+        throw new HttpError(400, 'invalid-fork-seq', 'atSeq must be a non-negative safe integer')
+      }
+      if (typeof deps.ctx.sessionController.fork !== 'function') {
+        throw new HttpError(501, 'fork-unavailable', 'this dsh version does not expose session/fork')
+      }
+      const forked = await deps.sessions.fork(
+        rc.params.id!,
+        typeof body.atSeq === 'number' ? body.atSeq : undefined,
+      )
+      sendJson(rc.res, 201, forked)
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/sessions/:id/cancel',
+    auth: 'device',
+    handler: (rc) => {
+      const accepted = deps.sessions.cancel(rc.params.id!)
+      sendJson(rc.res, 202, accepted)
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/sessions/:id/pin',
+    auth: 'device',
+    handler: async (rc) => {
+      try {
+        await setSessionPinned(deps.ctx, rc.params.id!, true)
+        sendJson(rc.res, 200, { ok: true })
+      } catch (error) {
+        throw new HttpError(409, 'session-pin-failed', shortError(error))
+      }
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/sessions/:id/unpin',
+    auth: 'device',
+    handler: async (rc) => {
+      try {
+        await setSessionPinned(deps.ctx, rc.params.id!, false)
+        sendJson(rc.res, 200, { ok: true })
+      } catch (error) {
+        throw new HttpError(409, 'session-pin-failed', shortError(error))
+      }
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/sessions/:id/archive',
+    auth: 'device',
+    handler: async (rc) => {
+      const body = (rc.body ?? {}) as { stopActivity?: unknown }
+      try {
+        await setSessionArchived(deps.ctx, rc.params.id!, true, body.stopActivity === true)
+        sendJson(rc.res, 200, { ok: true })
+      } catch (error) {
+        throw new HttpError(409, 'session-archive-failed', shortError(error))
+      }
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/sessions/:id/unarchive',
+    auth: 'device',
+    handler: async (rc) => {
+      try {
+        await setSessionArchived(deps.ctx, rc.params.id!, false)
+        sendJson(rc.res, 200, { ok: true })
+      } catch (error) {
+        throw new HttpError(409, 'session-archive-failed', shortError(error))
+      }
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/sessions/:id/open',
+    auth: 'device',
+    handler: (rc) => {
+      const facts = serverFacts(deps)
+      // Prefer the authority this request actually reached. `getOrigin()` is
+      // the Host's bind address, which is often a LAN/Tailscale IP that the
+      // phone cannot open in its browser.
+      const base = `${facts.protocolName}://${rc.authority}`
+      sendJson(rc.res, 200, {
+        url: `${base}/`,
+        sessionId: rc.params.id!,
+        requiresBrowserLogin: true,
+        note: 'Open this in a browser that already has a dsh web session; the mobile token is not a browser token.',
+      })
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/sessions/:id/questions/:callId/answer',
+    auth: 'device',
+    handler: async (rc) => {
+      const body = rc.body as { answers?: unknown } | undefined
+      const answers = normalizeAnswers(body?.answers)
+      const accepted = await deps.interactions.answerContinued(rc.params.id!, rc.params.callId!, { answers })
+      if (!accepted) throw new HttpError(409, 'question-not-open', 'the question is not open in this session')
+      sendJson(rc.res, 200, { accepted: true })
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/sessions/:id/events',
+    auth: 'device',
+    handler: async (rc) => {
+      markStreaming(rc.res)
+      startSse(rc.res)
+      writeSse(rc.res, 'ready', { sessionId: rc.params.id!, time: Date.now() })
+      const heartbeat = setInterval(() => writeSse(rc.res, 'heartbeat', { time: Date.now() }), 15_000)
+      heartbeat.unref?.()
+      // A client disconnect and a device revoke both end this follow stream.
+      const abort = new AbortController()
+      const onClientAbort = (): void => abort.abort()
+      rc.signal.addEventListener('abort', onClientAbort)
+      const untrack = deps.hub.trackDevice(rc.device!.deviceId, () => abort.abort())
+      try {
+        for await (const frame of deps.sessions.follow(rc.params.id!, abort.signal)) {
+          if (abort.signal.aborted) break
+          writeSse(rc.res, 'frame', frame)
+        }
+      } catch (error) {
+        if (!abort.signal.aborted) {
+          writeSse(rc.res, 'error', { code: 'stream-failed', message: shortError(error) })
+        }
+      } finally {
+        untrack()
+        rc.signal.removeEventListener('abort', onClientAbort)
+        clearInterval(heartbeat)
+        if (!rc.res.writableEnded) rc.res.end()
+      }
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/sessions/:id/terminals',
+    auth: 'device',
+    handler: (rc) => {
+      sendJson(rc.res, 200, { items: deps.terminals.list(rc.params.id!) })
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/sessions/:id/terminals',
+    auth: 'device',
+    handler: async (rc) => {
+      const sessionId = rc.params.id!
+      const body = rc.body as { cols?: unknown; rows?: unknown } | undefined
+      const state = await deps.sessions.state(sessionId, rc.signal)
+      const cwd = state.session.cwd
+      if (typeof cwd !== 'string' || cwd.length === 0) {
+        throw new HttpError(409, 'session-cwd-unknown', 'the session has no working directory yet')
+      }
+      const created = await deps.terminals.create(sessionId, cwd, {
+        ...(typeof body?.cols === 'number' ? { cols: body.cols } : {}),
+        ...(typeof body?.rows === 'number' ? { rows: body.rows } : {}),
+      })
+      sendJson(rc.res, 201, created)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/sessions/:id/terminals/:terminalId/events',
+    auth: 'device',
+    handler: async (rc) => {
+      const sessionId = rc.params.id!
+      const terminalId = rc.params.terminalId!
+      // Resolve before headers so a missing terminal is a JSON 404.
+      const snapshot = deps.terminals.snapshot(sessionId, terminalId)
+      markStreaming(rc.res)
+      startSse(rc.res)
+      const heartbeat = setInterval(() => writeSse(rc.res, 'heartbeat', { time: Date.now() }), 15_000)
+      heartbeat.unref?.()
+      let ready = false
+      const pending: TerminalEvent[] = []
+      let release: () => void = () => undefined
+      const stopped = new Promise<void>(resolve => { release = resolve })
+      const shutdown = (): void => {
+        if (!rc.res.writableEnded) rc.res.end()
+        release()
+      }
+      // Subscribe before the snapshot is sent, then flush anything that raced
+      // in while the reconnect replay was being written.
+      const unsubscribe = deps.terminals.subscribe(sessionId, terminalId, event => {
+        if (!ready) {
+          pending.push(event)
+          return
+        }
+        writeSse(rc.res, event.type, event)
+      })
+      rc.signal.addEventListener('abort', shutdown)
+      const untrack = deps.hub.trackDevice(rc.device!.deviceId, shutdown)
+      writeSse(rc.res, 'ready', { ...snapshot, time: Date.now() })
+      ready = true
+      for (const event of pending.splice(0)) writeSse(rc.res, event.type, event)
+      try {
+        await stopped
+      } finally {
+        untrack()
+        rc.signal.removeEventListener('abort', shutdown)
+        unsubscribe()
+        clearInterval(heartbeat)
+        if (!rc.res.writableEnded) rc.res.end()
+      }
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/sessions/:id/terminals/:terminalId/input',
+    auth: 'device',
+    handler: async (rc) => {
+      const body = rc.body as { data?: unknown } | undefined
+      const data = body?.data
+      if (typeof data !== 'string' || data.length === 0) {
+        throw new HttpError(400, 'bad-input', 'data must be a non-empty string')
+      }
+      if (data.length > 65_536) throw new HttpError(413, 'input-too-large', 'terminal input is limited to 64 KiB')
+      await deps.terminals.write(rc.params.id!, rc.params.terminalId!, data)
+      sendJson(rc.res, 200, { accepted: true })
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/sessions/:id/terminals/:terminalId/resize',
+    auth: 'device',
+    handler: async (rc) => {
+      const body = rc.body as { cols?: unknown; rows?: unknown } | undefined
+      if (typeof body?.cols !== 'number' || typeof body?.rows !== 'number') {
+        throw new HttpError(400, 'bad-size', 'cols and rows must be numbers')
+      }
+      const info = await deps.terminals.resize(rc.params.id!, rc.params.terminalId!, body.cols, body.rows)
+      sendJson(rc.res, 200, info)
+    },
+  })
+
+  router.add({
+    method: 'DELETE',
+    pattern: '/sessions/:id/terminals/:terminalId',
+    auth: 'device',
+    handler: async (rc) => {
+      const closed = await deps.terminals.close(rc.params.id!, rc.params.terminalId!)
+      if (!closed) throw new HttpError(404, 'terminal-not-found', 'no such terminal in this session')
+      sendNoContent(rc.res)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/events',
+    auth: 'device',
+    handler: (rc) => {
+      markStreaming(rc.res)
+      const clientId = newId()
+      deps.hub.add(clientId, rc.device!.deviceId, rc.res)
+      writeSse(rc.res, 'hello', {
+        server: serverFacts(deps),
+        features: features(deps),
+        pendingApprovals: deps.interactions.listApprovals(),
+        pendingQuestions: deps.interactions.listQuestions(),
+        time: Date.now(),
+      })
+      rc.req.on('close', () => {
+        // `SseHub` removes the response on close; nothing else is owned here.
+      })
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/approvals',
+    auth: 'device',
+    handler: (rc) => {
+      sendJson(rc.res, 200, { items: deps.interactions.listApprovals() })
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/approvals/:id',
+    auth: 'device',
+    handler: (rc) => {
+      const body = rc.body as { decision?: unknown } | undefined
+      const decision = body?.decision
+      if (decision !== 'allow' && decision !== 'deny' && decision !== 'always') {
+        throw new HttpError(400, 'bad-decision', 'decision must be allow, deny, or always')
+      }
+      const item = deps.interactions.decideApproval(rc.params.id!, decision as ApprovalDecision)
+      if (item === undefined) throw new HttpError(404, 'approval-not-found', 'the approval is no longer pending')
+      sendJson(rc.res, 200, { accepted: true, decision })
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/presence',
+    auth: 'device',
+    handler: (rc) => {
+      const body = rc.body as { foreground?: unknown } | undefined
+      if (typeof body?.foreground !== 'boolean') {
+        throw new HttpError(400, 'bad-presence', 'foreground must be a boolean')
+      }
+      const device = rc.device
+      if (device === undefined) throw new HttpError(401, 'unauthenticated', 'a valid device token is required')
+      deps.interactions.setPresence(device.deviceId, body.foreground)
+      sendJson(rc.res, 200, { accepted: true })
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/questions',
+    auth: 'device',
+    handler: (rc) => {
+      sendJson(rc.res, 200, { items: deps.interactions.listQuestions() })
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/questions/:id/answer',
+    auth: 'device',
+    handler: (rc) => {
+      const body = rc.body as { answers?: unknown } | undefined
+      const answers = normalizeAnswers(body?.answers)
+      const answered = deps.interactions.answerQuestion(rc.params.id!, { answers })
+      if (answered === undefined) throw new HttpError(404, 'question-not-found', 'the question is no longer pending')
+      sendJson(rc.res, 200, { accepted: true })
+    },
+  })
+
+  if (config.enableDebugRoutes) {
+    router.add({
+      method: 'POST',
+      pattern: '/debug/approval',
+      auth: 'device',
+      handler: (rc) => {
+        const body = (rc.body ?? {}) as {
+          sessionId?: unknown
+          toolName?: unknown
+          reason?: unknown
+          displayReason?: unknown
+        }
+        const item = deps.interactions.createDebugApproval({
+          ...(typeof body.sessionId === 'string' ? { sessionId: body.sessionId } : {}),
+          ...(typeof body.toolName === 'string' ? { toolName: body.toolName } : {}),
+          ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
+          ...(typeof body.displayReason === 'object' && body.displayReason !== null
+            ? { displayReason: body.displayReason as { en: string; [locale: string]: string } }
+            : {}),
+        })
+        sendJson(rc.res, 201, item)
+      },
+    })
+    router.add({
+      method: 'POST',
+      pattern: '/debug/question',
+      auth: 'device',
+      handler: (rc) => {
+        const body = (rc.body ?? {}) as { sessionId?: unknown; questions?: unknown }
+        const item = deps.interactions.createDebugQuestion({
+          ...(typeof body.sessionId === 'string' ? { sessionId: body.sessionId } : {}),
+          ...(Array.isArray(body.questions) ? { questions: body.questions as never } : {}),
+        })
+        sendJson(rc.res, 201, item)
+      },
+    })
+    deps.logger.warn('[dsh-hello] debug interaction routes are enabled')
+  }
+
+  deps.logger.info(
+    `[dsh-hello] routes mounted at ${config.basePath} (protocol ${PROTOCOL_VERSION}, push ${config.push.provider})`,
+  )
+}
+
+function serverFacts(deps: RouteDependencies): ServerFacts {
+  const web = deps.ctx.webServer
+  let origin: string | null = null
+  try {
+    origin = typeof web.getOrigin === 'function' ? web.getOrigin() : null
+  } catch {
+    origin = null
+  }
+  return {
+    name: 'dsh-hello',
+    version: deps.pluginVersion,
+    protocol: PROTOCOL_VERSION,
+    dshVersion: deps.version.version,
+    dshCompatible: deps.version.compatible,
+    origin,
+    protocolName: web.protocol === 'https:' ? 'https' : 'http',
+    host: web.host ?? null,
+    port: web.port ?? null,
+  }
+}
+
+function scheduleCode(result: unknown): string | undefined {
+  if (typeof result !== 'object' || result === null) return undefined
+  const code = (result as { code?: unknown }).code
+  return typeof code === 'string' ? code : undefined
+}
+
+function features(deps: RouteDependencies): HealthResponse['features'] {
+  return {
+    approvals: true,
+    questions: true,
+    presence: true,
+    push: deps.push.isConfigured(),
+    debugRoutes: deps.config.enableDebugRoutes,
+    terminal: deps.terminals.available(),
+    files: true,
+    workspaces: workspacesAvailable(deps.ctx),
+    workspaceRename: workspaceRenameAvailable(deps.ctx),
+    archive: workspacesAvailable(deps.ctx),
+    pin: workspacesAvailable(deps.ctx),
+    agentPresets: agentPresetsAvailable(deps.ctx),
+    models: modelsAvailable(deps.ctx),
+    uploads: uploadsAvailable(deps.ctx),
+    readState: tagReadService(deps.ctx) !== undefined,
+    schedules: schedulesAvailable(deps.ctx),
+    scheduleActions: scheduleActionsAvailable(deps.ctx),
+    scheduleHistory: scheduleHistoryAvailable(deps.ctx),
+    sessionEvents: 'sse',
+    protocol: PROTOCOL_VERSION,
+  }
+}
+
+function assertLoopback(rc: RouteContext): void {
+  const address = rc.clientAddress.replace(/^::ffff:/, '')
+  if (address !== '127.0.0.1' && address !== '::1' && !address.startsWith('127.')) {
+    throw new HttpError(403, 'loopback-only', 'this route is available only from the Host itself')
+  }
+}
+
+function numberParam(value: string | null): number | undefined {
+  if (value === null || value === '') return undefined
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined
+}
+
+function sanitizeName(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0) return 'Mobile device'
+  return value.trim().slice(0, 80)
+}
+
+function randomPairingToken(): string {
+  // 32 random bytes rendered base64url, prefixed for recognisability.
+  const bytes = new Uint8Array(32)
+  globalThis.crypto.getRandomValues(bytes)
+  return `dshd_${Buffer.from(bytes).toString('base64url')}`
+}
+
+function normalizeAnswers(value: unknown): Array<{ id: string; selected: string[]; custom?: string }> {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new HttpError(400, 'bad-answers', 'answers must be a non-empty array')
+  }
+  return value.map((item) => {
+    if (typeof item !== 'object' || item === null) throw new HttpError(400, 'bad-answers', 'each answer must be an object')
+    const candidate = item as { id?: unknown; selected?: unknown; custom?: unknown }
+    if (typeof candidate.id !== 'string' || !Array.isArray(candidate.selected) || !candidate.selected.every(label => typeof label === 'string')) {
+      throw new HttpError(400, 'bad-answers', 'each answer needs an id and a selected string array')
+    }
+    return {
+      id: candidate.id,
+      selected: candidate.selected,
+      ...(typeof candidate.custom === 'string' ? { custom: candidate.custom } : {}),
+    }
+  })
+}
+
+function adminAuthorized(deps: RouteDependencies, rc: RouteContext): boolean {
+  const connection = deps.ctx.get('connection') as
+    | { admit(request: { headers: Record<string, string | string[] | undefined> }): { peer?: unknown; rejection?: number } }
+    | undefined
+  if (connection !== undefined && typeof connection.admit === 'function') {
+    try {
+      const admission = connection.admit({ headers: rc.req.headers })
+      if (admission.peer !== undefined) return true
+    } catch {
+      // Fall through to the loopback check.
+    }
+  }
+  return rc.clientAddress === '127.0.0.1' || rc.clientAddress === '::1' || rc.clientAddress.startsWith('127.')
+}
+
+async function adminData(deps: RouteDependencies): Promise<Record<string, unknown>> {
+  const view = deps.pairing.current()
+  const origin = serverFacts(deps).origin ?? ''
+  const payload = JSON.stringify({ v: 1, url: `${origin}${deps.config.basePath}`, code: view.code })
+  const qr = await renderQr(payload)
+  const qrSvg = await renderQrSvg(payload)
+  return {
+    code: view.code,
+    formatted: view.formatted,
+    fixed: view.fixed,
+    expiresAt: view.fixed ? null : view.expiresAt,
+    origin,
+    basePath: deps.config.basePath,
+    qr,
+    qrSvg,
+    time: Date.now(),
+    devices: deps.devices.list().map(device => ({
+      deviceId: device.deviceId,
+      deviceName: device.deviceName,
+      platform: device.platform,
+      appVersion: device.appVersion,
+      authorities: device.authorities,
+      pairedAt: device.pairedAt,
+      lastSeenAt: device.lastSeenAt,
+      push: device.push !== undefined,
+    })),
+  }
+}
+
+async function sendBinary(rc: RouteContext, file: { filename: string; size: number; contentType: string }): Promise<void> {
+  const offset = numberParam(rc.query.get('offset')) ?? 0
+  const limit = Math.min(Math.max(numberParam(rc.query.get('limit')) ?? 512 * 1024, 1), 2 * 1024 * 1024)
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > file.size) {
+    throw new HttpError(400, 'invalid-offset', 'offset must be a byte position inside the file')
+  }
+  const length = Math.min(limit, file.size - offset)
+  const buffer = Buffer.alloc(length)
+  const handle = await open(file.filename, 'r')
+  let bytesRead = 0
+  try {
+    if (length > 0) ({ bytesRead } = await handle.read(buffer, 0, length, offset))
+  } finally {
+    await handle.close()
+  }
+  const chunk = buffer.subarray(0, bytesRead)
+  sendJson(rc.res, 200, {
+    path: rc.query.get('path') ?? '',
+    size: file.size,
+    offset,
+    bytes: bytesRead,
+    contentType: file.contentType,
+    nextOffset: offset + bytesRead < file.size ? offset + bytesRead : undefined,
+    dataBase64: chunk.toString('base64'),
+  })
+}
+
+async function renderQr(text: string): Promise<string | null> {
+  try {
+    const mod = await import('qrcode-terminal')
+    const qrcode = (mod as { default?: unknown }).default ?? mod
+    return await new Promise<string>((resolve) => {
+      ;(qrcode as { generate(input: string, options: unknown, done: (output: string) => void): void })
+        .generate(text, { small: true }, resolve)
+    })
+  } catch {
+    return null
+  }
+}
+
+async function renderQrSvg(text: string): Promise<string | null> {
+  try {
+    const mod = await import('qrcode')
+    const qrcode = (mod as { default?: unknown }).default ?? mod
+    return await (qrcode as {
+      toString(input: string, options?: unknown): Promise<string>
+    }).toString(text, {
+      type: 'svg',
+      margin: 1,
+      width: 320,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#0b0e14', light: '#ffffff' },
+    })
+  } catch (error) {
+    console.warn('[dsh-hello] QR SVG generation failed:', error)
+    return null
+  }
+}

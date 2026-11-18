@@ -1,0 +1,82 @@
+{
+  "name": "dsh-hello",
+  "version": "0.2.0",
+  "description": "Phone access for DeepSeek Harness: pair a device, browse sessions, reply, approve tool calls, and open terminals and files.",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "mobile",
+    "remote",
+    "phone",
+    "android",
+    "ios",
+    "sessions",
+    "terminal",
+    "approvals"
+  ],
+  "license": "MIT",
+  "author": "ada87",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ada87/dsh-hello.git"
+  },
+  "homepage": "https://github.com/ada87/dsh-hello#readme",
+  "bugs": {
+    "url": "https://github.com/ada87/dsh-hello/issues"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.4 <0.3.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node build.mjs",
+    "dev:host": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "compat:site": "node compat/build-site.mjs",
+    "pack:local": "pnpm pack",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.19.0",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "semver": "^7.7.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/qrcode-terminal": "^0.12.2",
+    "@types/semver": "^7.7.1",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}

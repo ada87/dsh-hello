@@ -1,0 +1,8 @@
+{
+  "category": "remote",
+  "descriptions": {
+    "en": "Phone access for DeepSeek Harness: pair a device, browse sessions, reply, approve tool calls, and open terminals and files.",
+    "zh": "DSH 的手机入口：配对后在手机上浏览会话、回复、审批工具调用，打开终端和文件。"
+  },
+  "screenshots": []
+}
