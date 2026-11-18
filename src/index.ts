@@ -80,6 +80,22 @@ export async function apply(ctx: HostContext, rawConfig?: Partial<PluginConfig>)
   const sessions = createSessionFacade(host)
   const terminals = new TerminalManager(host, logger)
 
+  // A phone can hand a pending interaction to the browser only if it knows a
+  // Web URL that already carries this process's launch token. Both services are
+  // optional: a headless profile mounts neither, so read them through `get`.
+  const connection = readService<NonNullable<HostContext['connection']>>(ctx, 'connection')
+  const webApp = readService<NonNullable<HostContext['webApp']>>(ctx, 'webApp')
+  const webUrl = (): string | null => {
+    const base = webApp?.getAdvertisedUrl?.() ?? (hostOrigin.length > 0 ? hostOrigin : undefined)
+    if (base === undefined) return null
+    try {
+      return connection?.authenticatedUrl?.(base) ?? base
+    } catch (error) {
+      logger.warn(`[dsh-hello] could not mint the Web UI URL: ${shortError(error)}`)
+      return base
+    }
+  }
+
   const router = new HttpRouter(config, {
     authenticate: token => devices.authenticate(token),
     isKnownAuthority: authority => devices.list().some(device => device.authorities.includes(authority)),
@@ -99,6 +115,7 @@ export async function apply(ctx: HostContext, rawConfig?: Partial<PluginConfig>)
     logger,
     version,
     pluginVersion: PLUGIN_VERSION,
+    webUrl,
   })
 
   ctx.effect(() => {
@@ -194,6 +211,14 @@ function registerSessionNotifications(
     if (typeof sessionId !== 'string') return
     hub.broadcast('session', { action: 'error', sessionId, message: typeof message === 'string' ? message : 'agent error' })
   }, { global: true })
+}
+
+function readService<T>(ctx: HostContext, name: string): T | undefined {
+  try {
+    return ctx.get(name) as T | undefined
+  } catch {
+    return undefined
+  }
 }
 
 function createLogger(_ctx: HostContext): {

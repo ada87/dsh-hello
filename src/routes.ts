@@ -73,6 +73,11 @@ export interface RouteDependencies {
   }
   version: { version: string | null; compatible: boolean }
   pluginVersion: string
+  /**
+   * Authenticated Web UI URL for this process, or `null` when the Host does not
+   * expose one. The app opens it to hand a pending interaction to the browser.
+   */
+  webUrl?: () => string | null
 }
 
 export function registerRoutes(router: HttpRouter, deps: RouteDependencies): void {
@@ -170,6 +175,17 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
       const renamed = await deps.devices.rename(rc.params.id!, name)
       if (!renamed) throw new HttpError(404, 'device-not-found', 'no such device')
       sendJson(rc.res, 200, await adminData(deps, requestBase(rc) ?? requestOrigin(deps, rc) ?? ''))
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/web-url',
+    auth: 'device',
+    handler: (rc) => {
+      const url = deps.webUrl?.() ?? null
+      if (url === null) throw new HttpError(503, 'web-url-unavailable', 'this Host does not expose its Web UI URL')
+      sendJson(rc.res, 200, { url })
     },
   })
 
@@ -912,24 +928,6 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
   })
 
   router.add({
-    method: 'GET',
-    pattern: '/sessions/:id/open',
-    auth: 'device',
-    handler: (rc) => {
-      // Use the authority this request actually reached. `getOrigin()` is the
-      // Host's bind address, which is often a private IP that the phone cannot
-      // open in its browser.
-      const base = requestOrigin(deps, rc) ?? serverFacts(deps).origin ?? `${serverFacts(deps).protocolName}://${rc.authority}`
-      sendJson(rc.res, 200, {
-        url: `${base}/`,
-        sessionId: rc.params.id!,
-        requiresBrowserLogin: true,
-        note: 'Open this in a browser that already has a dsh web session; the mobile token is not a browser token.',
-      })
-    },
-  })
-
-  router.add({
     method: 'POST',
     pattern: '/sessions/:id/questions/:callId/answer',
     auth: 'device',
@@ -1257,8 +1255,9 @@ function scheduleCode(result: unknown): string | undefined {
 
 function features(deps: RouteDependencies): HealthResponse['features'] {
   return {
-    approvals: true,
-    questions: true,
+    approvals: deps.config.interactionTarget !== 'browser-only',
+    questions: deps.config.interactionTarget !== 'browser-only',
+    interactionTarget: deps.config.interactionTarget,
     presence: true,
     push: deps.push.isConfigured(),
     debugRoutes: deps.config.enableDebugRoutes,

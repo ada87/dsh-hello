@@ -248,6 +248,7 @@ the app probes `/dsh-hello/health`, and pairings live under `dsh-hello/*`.
     pairingTtlMs: 300000
     pairingCodeLength: 4
     pairingMaxAttempts: 8
+    interactionTarget: browser-first     # phone-first | browser-first | browser-only
     approvalWaitTimeoutMs: 120000
     questionWaitTimeoutMs: 120000
     allowSessionWideGrants: true
@@ -355,7 +356,7 @@ and `/pair`, every route requires `Authorization: Bearer <device token>`.
 | POST | `/workspaces` | Adopt an existing directory (`{ "path", "title"? }`) |
 | PUT | `/workspaces/:id` | Rename a workspace (`{ "title": string }`); duplicate titles are allowed, like dsh Web |
 | POST | `/sessions/:id/cancel` | Stop the current turn |
-| GET | `/sessions/:id/open` | Escape-hatch browser URL |
+| GET | `/web-url` | This Host's Web UI, with the process launch token already attached |
 | GET | `/read-state` | Shared read watermarks; proxied to dsh-tag |
 | POST | `/read-state` | Merge this device's watermarks (`{ "sessions": { id: { readAt, unread, at } } }`) and return the merged map |
 | GET | `/events` | Global SSE: approvals, questions, sessions, turn end |
@@ -376,19 +377,27 @@ watermarks are shared across paired devices.
 
 ### Approval policy
 
-The plugin follows the required policy exactly:
+dsh hands an approval or a question to **one** answerer: the first listener that
+does not call `next()`. `interactionTarget` decides who that is.
 
-1. If a paired app is in the foreground with a live global SSE connection, claim
-   the request even when a browser is connected. The app heartbeats
-   `POST /presence` every 20 seconds; a claim expires after 45 seconds without a
-   heartbeat, and backgrounding the app releases it immediately.
-2. Otherwise, if `ctx.typertGateway.hasLiveClient()` is true, call `next()` — the
-   browser wins. The waterfall is first-answerer-wins, so claiming would hide the
-   prompt from the official UI.
-3. With neither, claim the request, broadcast it over SSE, push it if configured,
-   and wait for the app or the timeout.
-4. Timeout, abort, an answer of "no", or the foreground app leaving falls back to
-   `next()`, so dsh's own fail-closed `unavailable` path still applies.
+| Value | Who answers |
+|---|---|
+| `browser-first` (default) | A live browser always answers. With no browser connected the app holds the request, even in the background. |
+| `phone-first` | A foreground app answers, even when a browser is connected; otherwise dsh's own listeners do. |
+| `browser-only` | Nobody here: the plugin registers no listener, so dsh behaves exactly as if it were not installed. The app shows a read-only prompt and hands the decision to the Web UI. |
+
+The plugin registers unscoped (`global`) waterfall listeners ahead of the
+browser's answerer, so the policy rather than listener order decides. dsh 0.2.2
+dispatches both waterfalls with `scopeTarget(agent, agent)`; a listener bound to
+the plugin's own scope never sees them.
+
+With a request claimed, the app is asked over SSE (and push) and its answer
+becomes the tool's outcome:
+
+1. A claim expires after 45 seconds without a `POST /presence` heartbeat, and
+   backgrounding the app releases it immediately, so a browser can take over.
+2. Timeout, abort, "no", or the app leaving falls back to `next()`, so dsh's own
+   fail-closed `unavailable` path still applies.
 
 `always` is a process-local session grant for one `session + tool` pair. dsh only
 defines one-shot `allowed-once`; the plugin does not invent durable grants.

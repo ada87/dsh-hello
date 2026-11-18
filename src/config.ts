@@ -33,6 +33,8 @@ export interface PushConfig {
   notifyQuestion: boolean
 }
 
+export type InteractionTarget = 'phone-first' | 'browser-first' | 'browser-only'
+
 export interface Config {
   /** Base path for every route this plugin registers. No trailing slash. */
   basePath: string
@@ -64,6 +66,20 @@ export interface Config {
   pairingCode?: string
   /** Print the current pairing code and QR at activation. */
   logPairingCode: boolean
+  /**
+   * Where approvals and user questions go while this plugin is loaded.
+   *
+   * dsh dispatches both through one agent-scoped waterfall, so exactly one
+   * answerer sees a request: whoever holds it first. This switch decides who
+   * that is.
+   * - `phone-first`: the app holds requests while it is in the foreground;
+   *   anything else falls through to dsh's own listeners (the browser).
+   * - `browser-first`: a live browser client always answers; the app holds
+   *   only when no browser is connected (for example, phone-only on the go).
+   * - `browser-only`: this plugin never answers - dsh behaves as if it were
+   *   not installed - and the app only shows a prompt that opens the Web UI.
+   */
+  interactionTarget: InteractionTarget
   /** How long an approval request is held for the app before delegation. */
   approvalWaitTimeoutMs: number
   /** How long a user question is held for the app before delegation. */
@@ -102,6 +118,7 @@ export const Config: Schema<Config> = Schema.object({
   pairingMaxAttempts: Schema.number().default(8),
   pairingCode: Schema.string(),
   logPairingCode: Schema.boolean().default(true),
+  interactionTarget: Schema.union(['phone-first', 'browser-first', 'browser-only'] as const).default('browser-first'),
   approvalWaitTimeoutMs: Schema.number().default(2 * 60 * 1000),
   questionWaitTimeoutMs: Schema.number().default(2 * 60 * 1000),
   allowSessionWideGrants: Schema.boolean().default(true),
@@ -144,6 +161,7 @@ export function normalizeConfig(input: Partial<Config> | undefined): Config {
     pairingCodeLength: raw.pairingCodeLength ?? 4,
     pairingMaxAttempts: raw.pairingMaxAttempts ?? 8,
     logPairingCode: raw.logPairingCode ?? true,
+    interactionTarget: raw.interactionTarget ?? 'browser-first',
     approvalWaitTimeoutMs: raw.approvalWaitTimeoutMs ?? 2 * 60 * 1000,
     questionWaitTimeoutMs: raw.questionWaitTimeoutMs ?? 2 * 60 * 1000,
     allowSessionWideGrants: raw.allowSessionWideGrants ?? true,
@@ -177,6 +195,9 @@ export function normalizeConfig(input: Partial<Config> | undefined): Config {
   }
   if (!Number.isFinite(config.maxBodyBytes) || config.maxBodyBytes < 1024) {
     throw new Error('dsh-hello: maxBodyBytes must be at least 1024')
+  }
+  if (config.interactionTarget !== 'phone-first' && config.interactionTarget !== 'browser-first' && config.interactionTarget !== 'browser-only') {
+    throw new Error('dsh-hello: interactionTarget must be phone-first, browser-first, or browser-only')
   }
   return config
 }

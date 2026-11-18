@@ -40,6 +40,8 @@ export interface HealthResponse extends ServerFacts {
   features: {
     approvals: boolean
     questions: boolean
+    /** Which side owns approvals and questions while this plugin is loaded. */
+    interactionTarget: 'phone-first' | 'browser-first' | 'browser-only'
     /** Whether a foreground app can claim questions/approvals before the browser. */
     presence: boolean
     push: boolean

@@ -140,6 +140,14 @@ export type SessionFollowFrame = SessionFollowSnapshot | SessionEventEntry
 export interface AgentLike {
   readonly id: string
   readonly session: { readonly id?: string; header?: { id?: string; cwd?: string } }
+  /**
+   * The agent's own Cordis scope. dsh dispatches `approval/request` and
+   * `user-questions/request` with `scopeTarget(agent, agent)`, so a listener
+   * registered here is the only host-side way to answer them.
+   */
+  readonly ctx?: {
+    on(event: string, listener: (...args: unknown[]) => unknown): () => void
+  }
 }
 
 export interface ResolveAgentResult {
@@ -210,6 +218,16 @@ export interface TypertGatewayService {
 export interface ConnectionService {
   /** Validate a dsh browser/API credential from request headers. */
   admit(request: { headers: Record<string, string | string[] | undefined> }): { peer?: unknown; rejection?: number }
+  /**
+   * Add this process's launch token to an ordinary Web application URL, so a
+   * phone can open an already-authenticated Web UI instead of typing a token.
+   */
+  authenticatedUrl?(baseUrl: string): string
+}
+
+/** The Web app's advertised root, honouring `--public-url` when set. */
+export interface WebAppService {
+  getAdvertisedUrl(): string
 }
 
 export interface SubprocessTerminalHandle {
@@ -252,6 +270,8 @@ export interface HostContext {
   userQuestions?: UserQuestionsService
   typertGateway?: TypertGatewayService
   subprocess?: SubprocessService
+  connection?: ConnectionService
+  webApp?: WebAppService
   on(event: string, listener: (...args: unknown[]) => unknown, options?: Record<string, unknown>): () => void
   effect(setup: () => (() => void) | void, label?: string): () => void
   get(name: string): unknown

@@ -306,6 +306,7 @@ before(async () => {
     pairingCodeLength: 4,
     pairingMaxAttempts: 8,
     logPairingCode: false,
+    interactionTarget: 'browser-first',
     approvalWaitTimeoutMs: 5000,
     questionWaitTimeoutMs: 5000,
     allowSessionWideGrants: true,
@@ -584,7 +585,7 @@ test('a live browser wins: the approval listener delegates with next()', async (
   assert.equal(outcome, 'unavailable')
 })
 
-test('a foreground app beats a live browser and releases its claim on background', async () => {
+test('browser-first: an app with no live browser claims, and backgrounding releases it', async () => {
   const sse = await openSse(state)
   const setPresence = (foreground: boolean) => fetch(`${state.base}/presence`, {
     method: 'POST',
@@ -593,15 +594,14 @@ test('a foreground app beats a live browser and releases its claim on background
   })
   try {
     assert.equal((await setPresence(true)).status, 200)
-    state.ctx.browserLive = true
     let nextCalled = false
     const decision = state.ctx.waterfall('approval/request',
-      { agent: { id: sessionId }, toolName: 'bash', reason: 'phone first' },
+      { agent: { id: sessionId }, toolName: 'bash', reason: 'no browser connected' },
       () => { nextCalled = true; return Promise.resolve('unavailable') },
     )
     const item = await waitForApproval(state)
     assert.equal(item.toolName, 'bash')
-    assert.equal(nextCalled, false, 'a foreground phone claims the approval')
+    assert.equal(nextCalled, false, 'with no live browser the app claims the approval')
 
     assert.equal((await setPresence(false)).status, 200)
     assert.equal(await decision, 'unavailable')

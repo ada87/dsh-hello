@@ -95,17 +95,29 @@ export class InteractionBroker {
 
   register(): void {
     this.presenceSweep.unref?.()
+    if (this.config.interactionTarget === 'browser-only') {
+      // Exactly dsh without this plugin: no listener means dsh's own answerers
+      // (the browser) own every request, and nothing here can delay them.
+      this.logger.info('[dsh-hello] interactionTarget browser-only: the app will not answer approvals or questions')
+      return
+    }
+    // dsh dispatches both waterfalls with `scopeTarget(agent, agent)`, so a
+    // listener bound to this plugin's own scope never fires. An unscoped
+    // (`global`) listener bypasses that carrier filter, and `prepend` puts this
+    // broker ahead of the browser's answerer so the configured policy - not the
+    // registration order - decides who holds a request.
+    const listen = { global: true, prepend: true } as const
     this.ctx.on('approval/request', async (...args: unknown[]) => {
       const req = args[0] as ApprovalRequestLike
       const next = args[1] as Next<'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'>
       this.logger.info(`[dsh-hello] approval/request ${req.toolName} reason=${req.reason ?? '-'} session=${req.agent?.id ?? '-'}`)
       return this.handleApproval(req, next)
-    })
+    }, listen)
     this.ctx.on('user-questions/request', async (...args: unknown[]) => {
       const req = args[0] as QuestionRequestLike
       const next = args[1] as Next<QuestionAnswer>
       return this.handleQuestion(req, next)
-    })
+    }, listen)
   }
 
   listApprovals(): ApprovalItem[] {
@@ -286,9 +298,11 @@ export class InteractionBroker {
       })
       return 'allowed-once'
     }
-    const phoneHold = this.phoneWins()
-    if (!phoneHold && this.browserWins()) {
-      this.logger.info(`[dsh-hello] approval ${req.toolName} went to the browser (no foreground phone with a live stream)`)
+    const phoneHold = this.shouldHoldForPhone()
+    if (!phoneHold) {
+      this.logger.info(
+        `[dsh-hello] approval ${req.toolName} stays with dsh (${this.config.interactionTarget}; browser=${this.browserWins()} phone=${this.phoneWins()})`,
+      )
       return next()
     }
     if (!this.appCanAnswer()) {
@@ -351,8 +365,8 @@ export class InteractionBroker {
     this.logger.info(
       `[dsh-hello] question request in ${sessionId}: phone=${this.phoneWins()} presence=${this.hasForegroundPhone()} hub=${this.hub.hasClients()} browser=${this.browserWins()}`,
     )
-    const phoneHold = this.phoneWins()
-    if (!phoneHold && this.browserWins()) return next()
+    const phoneHold = this.shouldHoldForPhone()
+    if (!phoneHold) return next()
     if (!this.appCanAnswer()) return next()
     if (req.signal?.aborted === true) return next()
 
@@ -444,6 +458,21 @@ export class InteractionBroker {
   private browserWins(): boolean {
     const gateway = getService<NonNullable<HostContext['typertGateway']>>(this.ctx, 'typertGateway')
     return gateway?.hasLiveClient() === true
+  }
+
+  /**
+   * Whether this plugin should take a request away from dsh's own answerers.
+   * Only one answerer ever sees a request, so this is the whole policy:
+   * `browser-first` yields whenever a browser is live, and `browser-only`
+   * never registers a listener at all.
+   */
+  private shouldHoldForPhone(): boolean {
+    return shouldHoldInteraction({
+      target: this.config.interactionTarget,
+      browserLive: this.browserWins(),
+      foregroundPhone: this.phoneWins(),
+      appConnected: this.appCanAnswer(),
+    })
   }
 
   /** A foreground app only wins while its SSE connection can receive the card. */
@@ -647,5 +676,32 @@ function getService<T>(ctx: HostContext, name: string): T | undefined {
     return ctx.get(name) as T | undefined
   } catch {
     return undefined
+  }
+}
+
+/**
+ * The whole interaction policy, kept pure so all three modes are testable.
+ *
+ * dsh hands a request to exactly one answerer, so "who should hold it" is a
+ * single decision:
+ * - `browser-only` never holds: dsh behaves as if this plugin were absent.
+ * - `browser-first` yields to a live browser and otherwise takes the request as
+ *   long as the app can receive it, even when the app is in the background.
+ * - `phone-first` takes it only while the app is actually in the foreground;
+ *   everything else falls through to dsh's own listeners.
+ */
+export function shouldHoldInteraction(input: {
+  target: Config['interactionTarget']
+  browserLive: boolean
+  foregroundPhone: boolean
+  appConnected: boolean
+}): boolean {
+  switch (input.target) {
+    case 'browser-only':
+      return false
+    case 'browser-first':
+      return !input.browserLive && input.appConnected
+    case 'phone-first':
+      return input.foregroundPhone
   }
 }
