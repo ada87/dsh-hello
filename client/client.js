@@ -36,6 +36,7 @@ window.__ModuleLoader__.load({
 .dd-head{padding:0 0 18px}
 .dd-title{font-size:18px;font-weight:600;margin:0 0 4px;color:var(--dsw-alias-label-primary)}
 .dd-desc{margin:0;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-tertiary)}
+.dd-oneLine{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dd-row{display:flex;gap:24px;align-items:center;justify-content:space-between;padding:16px 0;border-bottom:0.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.22))}
 .dd-rowTop{flex-wrap:wrap;row-gap:10px}
 .dd-rowTop .dd-rowText{flex:1 1 240px}
@@ -98,9 +99,9 @@ window.__ModuleLoader__.load({
       interactionPhone: '手机优先',
       interactionBrowser: '网页优先',
       interactionWebOnly: '仅网页',
-      interactionHintPhone: '手机在前台时由手机作答；不在前台就交给网页',
-      interactionHintBrowser: '网页打开时由网页作答；没有网页时手机兜底',
-      interactionHintWebOnly: '手机只显示提示，审批和提问都在网页处理',
+      interactionHintPhone: '手机在前台时作答，否则交给网页',
+      interactionHintBrowser: '网页打开时作答，否则手机兜底',
+      interactionHintWebOnly: '只在网页作答，手机仅提示',
       remaining: '剩余 {time}',
       reset: '重置',
       modify: '修改',
@@ -146,9 +147,9 @@ window.__ModuleLoader__.load({
       interactionPhone: 'Phone first',
       interactionBrowser: 'Browser first',
       interactionWebOnly: 'Web only',
-      interactionHintPhone: 'The phone answers while it is in the foreground; otherwise the web UI does',
-      interactionHintBrowser: 'A live browser answers; the phone takes over only when no browser is connected',
-      interactionHintWebOnly: 'The phone only shows a prompt; approvals and questions are answered in the web UI',
+      interactionHintPhone: 'Phone answers while in the foreground',
+      interactionHintBrowser: 'Web UI answers; phone when no browser',
+      interactionHintWebOnly: 'Web UI only; phone just shows a prompt',
       remaining: '{time} left',
       reset: 'Reset',
       modify: 'Change',
@@ -504,7 +505,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dd-row dd-rowTop' },
               h('div', { className: 'dd-rowText' },
                 h('span', { className: 'dd-label' }, t('interactionTitle')),
-                h('span', { className: 'dd-desc' },
+                h('span', { className: 'dd-desc dd-oneLine' },
                   interaction === 'browser-only'
                     ? t('interactionHintWebOnly')
                     : interaction === 'phone-first'
