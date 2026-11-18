@@ -40,6 +40,7 @@ window.__ModuleLoader__.load({
 .dd-rowTop{flex-wrap:wrap;row-gap:10px}
 .dd-rowTop .dd-rowText{flex:1 1 240px}
 .dd-rowTop .dd-control{margin-left:auto}
+.dd-rowHead{border-bottom:none;padding-bottom:0}
 .dd-row:last-child{border-bottom:none}
 .dd-rowText{display:flex;flex-direction:column;gap:4px;min-width:0}
 .dd-label{font-size:14px;color:var(--dsw-alias-label-primary)}
@@ -406,10 +407,9 @@ window.__ModuleLoader__.load({
               h('h2', { className: 'dd-title' }, t('title'))),
             error === null ? null : h('p', { className: 'dd-error' }, error),
 
-            h('div', { className: 'dd-row dd-rowTop' },
+            h('div', { className: 'dd-row dd-rowTop dd-rowHead' },
               h('div', { className: 'dd-rowText' },
                 h('span', { className: 'dd-label' }, t('pairingCode')),
-                locked ? h('span', { className: 'dd-desc' }, t('lockHintOn')) : null,
               ),
               h('div', { className: 'dd-control' },
                 h('div', { className: 'dd-segment' },
@@ -436,7 +436,9 @@ window.__ModuleLoader__.load({
             ),
 
             locked
-              ? null
+              ? h('div', { className: 'dd-row' },
+                h('span', { className: 'dd-desc' }, t('lockHintOn')),
+              )
               : [
                 h('div', { className: 'dd-row', key: 'code' },
                   h('span', { className: 'dd-code' }, data?.formatted ?? '…'),
