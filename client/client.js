@@ -37,6 +37,9 @@ window.__ModuleLoader__.load({
 .dd-title{font-size:18px;font-weight:600;margin:0 0 4px;color:var(--dsw-alias-label-primary)}
 .dd-desc{margin:0;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-tertiary)}
 .dd-row{display:flex;gap:24px;align-items:center;justify-content:space-between;padding:16px 0;border-bottom:0.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.22))}
+.dd-rowTop{flex-wrap:wrap;row-gap:10px}
+.dd-rowTop .dd-rowText{flex:1 1 240px}
+.dd-rowTop .dd-control{margin-left:auto}
 .dd-row:last-child{border-bottom:none}
 .dd-rowText{display:flex;flex-direction:column;gap:4px;min-width:0}
 .dd-label{font-size:14px;color:var(--dsw-alias-label-primary)}
@@ -403,7 +406,7 @@ window.__ModuleLoader__.load({
               h('h2', { className: 'dd-title' }, t('title'))),
             error === null ? null : h('p', { className: 'dd-error' }, error),
 
-            h('div', { className: 'dd-row' },
+            h('div', { className: 'dd-row dd-rowTop' },
               h('div', { className: 'dd-rowText' },
                 h('span', { className: 'dd-label' }, t('pairingCode')),
                 locked ? h('span', { className: 'dd-desc' }, t('lockHintOn')) : null,
