@@ -260,7 +260,7 @@ async function toListItem(
     running: summary.running,
     agentAvailable: summary.agentAvailable,
     blank: summary.blank,
-    ...(summary.cwd === undefined ? {} : { cwd: summary.cwd }),
+    ...(summary.cwd === undefined ? {} : { cwd: normalizeCwd(summary.cwd) }),
     ...(summary.parentSessionId === undefined ? {} : { parentSessionId: summary.parentSessionId }),
     ...(summary.origin === undefined ? {} : { origin: summary.origin }),
     ...(summary.formatStatus === undefined ? {} : { formatStatus: summary.formatStatus }),
@@ -343,4 +343,14 @@ export function isNotFound(error: unknown): boolean {
   const candidate = error as { code?: unknown; message?: unknown }
   return candidate.code === 'session/not-found'
     || (typeof candidate.message === 'string' && candidate.message.includes('not found'))
+}
+
+/**
+ * dsh records the cwd as the operator typed it, so the same directory can arrive
+ * as `D:\repo` and `D:\\repo`. Grouping and labels compare these strings, so
+ * collapse the duplicate separators at the wire boundary.
+ */
+function normalizeCwd(value: string): string {
+  const collapsed = value.replace(/\\{2,}/g, '\\').replace(/\/{2,}/g, '/')
+  return collapsed.length > 3 ? collapsed.replace(/[\\/]+$/, '') : collapsed
 }
