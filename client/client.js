@@ -447,7 +447,7 @@ window.__ModuleLoader__.load({
 
             h('div', { className: 'dd-block' },
               h('span', { className: 'dd-label' }, t('qrTitle')),
-              data?.qrSvg
+              typeof data?.qrSvg === 'string' && data.qrSvg.startsWith('<svg')
                 ? h('div', { className: 'dd-qr-img', dangerouslySetInnerHTML: { __html: data.qrSvg } })
                 : h('span', { className: 'dd-desc' }, t('qrFailed')),
               h('span', { className: 'dd-desc' }, t('qrHint')),

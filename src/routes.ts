@@ -1414,31 +1414,85 @@ async function sendBinary(rc: RouteContext, file: { filename: string; size: numb
 }
 
 async function renderQr(text: string): Promise<string | null> {
+  const candidates: unknown[] = []
   try {
-    const mod = await import('qrcode-terminal')
-    const qrcode = (mod as { default?: unknown }).default ?? mod
-    return await new Promise<string>((resolve) => {
-      ;(qrcode as { generate(input: string, options: unknown, done: (output: string) => void): void })
-        .generate(text, { small: true }, resolve)
-    })
+    const mod = (await import('qrcode-terminal')) as { default?: { default?: unknown } }
+    candidates.push(mod.default, mod.default?.default, mod)
   } catch {
-    return null
+    // Fall through to the CommonJS require below.
   }
+  try {
+    const { createRequire } = await import('node:module')
+    candidates.push(createRequire(import.meta.url)('qrcode-terminal'))
+  } catch {
+    // No terminal QR without the package; callers treat null as "no QR".
+  }
+  for (const candidate of candidates) {
+    const generate = (candidate as { generate?: unknown } | null)?.generate
+    if (typeof generate !== 'function') continue
+    try {
+      return await new Promise<string>((resolve) => {
+        ;(candidate as { generate(input: string, options: unknown, done: (output: string) => void): void })
+          .generate(text, { small: true }, resolve)
+      })
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+/**
+ * Resolve `qrcode`'s API however this Host loaded the plugin.
+ *
+ * `mod.default ?? mod` is not enough: depending on how the loader interops the
+ * CommonJS package, that expression can land on a plain object, and its
+ * inherited `Object.prototype.toString` then returns the string
+ * "[object Object]" — which the admin page rendered as the QR. Accept only an
+ * object with a real `toString`, and fall back to `createRequire`.
+ */
+async function loadQrSvgApi(): Promise<{ toString(input: string, options?: unknown): Promise<string> } | null> {
+  const isApi = (value: unknown): value is { toString(input: string, options?: unknown): Promise<string> } =>
+    typeof value === 'object'
+    && value !== null
+    && typeof (value as { toString?: unknown }).toString === 'function'
+    && (value as { toString: unknown }).toString !== Object.prototype.toString
+
+  try {
+    const mod = (await import('qrcode')) as { default?: { default?: unknown } }
+    for (const candidate of [mod.default, mod.default?.default, mod]) {
+      if (isApi(candidate)) return candidate
+    }
+  } catch (error) {
+    console.warn('[dsh-hello] could not import qrcode through ESM:', error)
+  }
+  try {
+    const { createRequire } = await import('node:module')
+    const required = createRequire(import.meta.url)('qrcode') as unknown
+    if (isApi(required)) return required
+  } catch (error) {
+    console.warn('[dsh-hello] could not require qrcode:', error)
+  }
+  return null
 }
 
 async function renderQrSvg(text: string): Promise<string | null> {
+  const qrcode = await loadQrSvgApi()
+  if (qrcode === null) {
+    console.warn('[dsh-hello] qrcode is unavailable; the admin page will not show a QR code')
+    return null
+  }
   try {
-    const mod = await import('qrcode')
-    const qrcode = (mod as { default?: unknown }).default ?? mod
-    return await (qrcode as {
-      toString(input: string, options?: unknown): Promise<string>
-    }).toString(text, {
+    const svg = await qrcode.toString(text, {
       type: 'svg',
       margin: 1,
       width: 320,
       errorCorrectionLevel: 'M',
       color: { dark: '#0b0e14', light: '#ffffff' },
     })
+    // Never hand the page something that is not an SVG: a bad value used to
+    // render as the literal text "[object Object]".
+    return typeof svg === 'string' && svg.trimStart().startsWith('<svg') ? svg : null
   } catch (error) {
     console.warn('[dsh-hello] QR SVG generation failed:', error)
     return null
