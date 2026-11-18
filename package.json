@@ -1,6 +1,6 @@
 {
   "name": "dsh-hello",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Phone access for DeepSeek Harness: pair a device, browse sessions, reply, approve tool calls, and open terminals and files.",
   "type": "module",
   "main": "lib/index.js",

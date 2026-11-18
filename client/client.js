@@ -94,6 +94,13 @@ window.__ModuleLoader__.load({
       lockHintOn: '已锁定：新设备无法配对，已连接的设备照常使用',
       oneTimeMode: '一次性',
       fixedMode: '永久性',
+      interactionTitle: '审批与提问',
+      interactionPhone: '手机优先',
+      interactionBrowser: '网页优先',
+      interactionWebOnly: '仅网页',
+      interactionHintPhone: '手机在前台时由手机作答；不在前台就交给网页',
+      interactionHintBrowser: '网页打开时由网页作答；没有网页时手机兜底',
+      interactionHintWebOnly: '手机只显示提示，审批和提问都在网页处理',
       remaining: '剩余 {time}',
       reset: '重置',
       modify: '修改',
@@ -135,6 +142,13 @@ window.__ModuleLoader__.load({
       lockHintOn: 'Locked: new devices cannot pair, while paired devices keep working',
       oneTimeMode: 'One-time',
       fixedMode: 'Permanent',
+      interactionTitle: 'Approvals & questions',
+      interactionPhone: 'Phone first',
+      interactionBrowser: 'Browser first',
+      interactionWebOnly: 'Web only',
+      interactionHintPhone: 'The phone answers while it is in the foreground; otherwise the web UI does',
+      interactionHintBrowser: 'A live browser answers; the phone takes over only when no browser is connected',
+      interactionHintWebOnly: 'The phone only shows a prompt; approvals and questions are answered in the web UI',
       remaining: '{time} left',
       reset: 'Reset',
       modify: 'Change',
@@ -268,6 +282,9 @@ window.__ModuleLoader__.load({
 
           const fixed = data?.fixed === true
           const locked = data?.locked === true
+          const interaction = data?.interactionTarget === 'phone-first' || data?.interactionTarget === 'browser-only'
+            ? data.interactionTarget
+            : 'browser-first'
           const remaining = !fixed && data ? Math.max(0, data.expiresAt - now) : null
           const left = remaining === null
             ? ''
@@ -282,6 +299,28 @@ window.__ModuleLoader__.load({
                 credentials: 'same-origin',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({ locked: next }),
+              })
+              if (!response.ok) {
+                const body = await response.json().catch(() => null)
+                throw new Error(body?.error?.message || t('operationFailed'))
+              }
+              setData(await response.json())
+            } catch (failure) {
+              setError(failure instanceof Error ? failure.message : String(failure))
+            } finally {
+              setBusy(false)
+            }
+          }
+
+          async function setInteractionTarget(target) {
+            setBusy(true)
+            setError(null)
+            try {
+              const response = await fetch(BASE + '/admin/interaction' + adminBaseQuery(), {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ target }),
               })
               if (!response.ok) {
                 const body = await response.json().catch(() => null)
@@ -461,6 +500,40 @@ window.__ModuleLoader__.load({
                   h('span', { className: 'dd-desc' }, t('qrHint')),
                 ),
               ],
+
+            h('div', { className: 'dd-row dd-rowTop' },
+              h('div', { className: 'dd-rowText' },
+                h('span', { className: 'dd-label' }, t('interactionTitle')),
+                h('span', { className: 'dd-desc' },
+                  interaction === 'browser-only'
+                    ? t('interactionHintWebOnly')
+                    : interaction === 'phone-first'
+                      ? t('interactionHintPhone')
+                      : t('interactionHintBrowser')),
+              ),
+              h('div', { className: 'dd-control' },
+                h('div', { className: 'dd-segment' },
+                  h('button', {
+                    type: 'button',
+                    className: 'dd-segmentButton' + (interaction === 'phone-first' ? ' is-active' : ''),
+                    disabled: busy || data === null,
+                    onClick: () => { void setInteractionTarget('phone-first') },
+                  }, t('interactionPhone')),
+                  h('button', {
+                    type: 'button',
+                    className: 'dd-segmentButton' + (interaction === 'browser-first' ? ' is-active' : ''),
+                    disabled: busy || data === null,
+                    onClick: () => { void setInteractionTarget('browser-first') },
+                  }, t('interactionBrowser')),
+                  h('button', {
+                    type: 'button',
+                    className: 'dd-segmentButton' + (interaction === 'browser-only' ? ' is-active' : ''),
+                    disabled: busy || data === null,
+                    onClick: () => { void setInteractionTarget('browser-only') },
+                  }, t('interactionWebOnly')),
+                ),
+              ),
+            ),
 
             h('div', { className: 'dd-block' },
               h('span', { className: 'dd-label' }, t('devices')),

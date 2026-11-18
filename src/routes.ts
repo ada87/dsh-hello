@@ -78,6 +78,10 @@ export interface RouteDependencies {
    * expose one. The app opens it to hand a pending interaction to the browser.
    */
   webUrl?: () => string | null
+  /** Persist and apply a new approvals/questions policy for this Host. */
+  saveInteractionTarget?: (target: Config['interactionTarget']) => Promise<void>
+  /** The policy currently in force (stored override or the config default). */
+  interactionTarget?: () => Config['interactionTarget']
 }
 
 export function registerRoutes(router: HttpRouter, deps: RouteDependencies): void {
@@ -133,6 +137,23 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
         if (error instanceof HttpError) throw error
         throw new HttpError(400, 'bad-code', error instanceof Error ? error.message : String(error))
       }
+      sendJson(rc.res, 200, await adminData(deps, requestBase(rc) ?? requestOrigin(deps, rc) ?? ''))
+    },
+  })
+
+  router.add({
+    method: 'POST',
+    pattern: '/admin/interaction',
+    auth: 'public',
+    handler: async (rc) => {
+      if (!adminAuthorized(deps, rc)) throw new HttpError(401, 'admin-unauthorized', 'open this page from an authenticated dsh browser')
+      const body = (rc.body ?? {}) as { target?: unknown }
+      const target = body.target
+      if (target !== 'phone-first' && target !== 'browser-first' && target !== 'browser-only') {
+        throw new HttpError(400, 'bad-target', 'target must be phone-first, browser-first, or browser-only')
+      }
+      if (deps.saveInteractionTarget === undefined) throw new HttpError(503, 'interaction-unavailable', 'this Host cannot change the interaction policy')
+      await deps.saveInteractionTarget(target)
       sendJson(rc.res, 200, await adminData(deps, requestBase(rc) ?? requestOrigin(deps, rc) ?? ''))
     },
   })
@@ -1254,10 +1275,11 @@ function scheduleCode(result: unknown): string | undefined {
 }
 
 function features(deps: RouteDependencies): HealthResponse['features'] {
+  const target = deps.interactionTarget?.() ?? deps.config.interactionTarget
   return {
-    approvals: deps.config.interactionTarget !== 'browser-only',
-    questions: deps.config.interactionTarget !== 'browser-only',
-    interactionTarget: deps.config.interactionTarget,
+    approvals: target !== 'browser-only',
+    questions: target !== 'browser-only',
+    interactionTarget: target,
     presence: true,
     push: deps.push.isConfigured(),
     debugRoutes: deps.config.enableDebugRoutes,
@@ -1348,6 +1370,7 @@ async function adminData(deps: RouteDependencies, originBase: string): Promise<R
     formatted: view.formatted,
     fixed: view.fixed,
     locked: deps.pairing.isLocked(),
+    interactionTarget: deps.interactionTarget?.() ?? deps.config.interactionTarget,
     expiresAt: view.fixed ? null : view.expiresAt,
     origin,
     basePath: deps.config.basePath,

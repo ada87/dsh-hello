@@ -77,6 +77,26 @@ export async function apply(ctx: HostContext, rawConfig?: Partial<PluginConfig>)
   }
   const interactions = new InteractionBroker(host, config, hub, push, logger)
   interactions.register()
+
+  // The admin page can switch where approvals and questions go; the stored
+  // choice outranks the config default for this Host.
+  const interactionRecordKey = 'dsh-hello/interactions' as unknown
+  if (credentials !== undefined) {
+    try {
+      const record = await credentials.readRecord(interactionRecordKey)
+      const target = (record?.payload as { target?: unknown } | undefined)?.target
+      if (target === 'phone-first' || target === 'browser-first' || target === 'browser-only') {
+        interactions.setTarget(target)
+      }
+    } catch (error) {
+      logger.warn(`[dsh-hello] could not load the interaction target: ${shortError(error)}`)
+    }
+  }
+  const saveInteractionTarget = async (target: PluginConfig['interactionTarget']): Promise<void> => {
+    interactions.setTarget(target)
+    if (credentials === undefined) return
+    await credentials.modifyRecord(interactionRecordKey, async () => ({ kind: 'grant', payload: { target } }))
+  }
   const sessions = createSessionFacade(host)
   const terminals = new TerminalManager(host, logger)
 
@@ -116,6 +136,8 @@ export async function apply(ctx: HostContext, rawConfig?: Partial<PluginConfig>)
     version,
     pluginVersion: PLUGIN_VERSION,
     webUrl,
+    saveInteractionTarget,
+    interactionTarget: () => interactions.getTarget(),
   })
 
   ctx.effect(() => {

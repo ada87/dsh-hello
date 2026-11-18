@@ -85,22 +85,35 @@ export class InteractionBroker {
   /** Hands held interactions back if a foreground app dies without a false ping. */
   private readonly presenceSweep = setInterval(() => this.releasePhoneHolds(), 15_000)
 
+  /** Runtime policy: the config default, replaceable from the admin page. */
+  private target: Config['interactionTarget']
+
   constructor(
     private readonly ctx: HostContext,
     private readonly config: Config,
     private readonly hub: SseHub,
     private readonly push: { isConfigured(): boolean; notify(kind: 'approval' | 'question', payload: unknown): void },
     private readonly logger: { info(message: string): void; warn(message: string): void },
-  ) {}
+  ) {
+    this.target = config.interactionTarget
+  }
+
+  getTarget(): Config['interactionTarget'] {
+    return this.target
+  }
+
+  setTarget(target: Config['interactionTarget']): void {
+    if (target === this.target) return
+    this.target = target
+    this.logger.info(`[dsh-hello] interaction target is now ${target}`)
+    // A mode that stops taking requests must not leave a held card behind.
+    if (target === 'browser-only') this.releasePhoneHolds(true)
+  }
 
   register(): void {
     this.presenceSweep.unref?.()
-    if (this.config.interactionTarget === 'browser-only') {
-      // Exactly dsh without this plugin: no listener means dsh's own answerers
-      // (the browser) own every request, and nothing here can delay them.
-      this.logger.info('[dsh-hello] interactionTarget browser-only: the app will not answer approvals or questions')
-      return
-    }
+    // Always listen: the policy is switchable at runtime, and `browser-only`
+    // simply delegates every request, which costs nothing.
     // dsh dispatches both waterfalls with `scopeTarget(agent, agent)`, so a
     // listener bound to this plugin's own scope never fires. An unscoped
     // (`global`) listener bypasses that carrier filter, and `prepend` puts this
@@ -468,7 +481,7 @@ export class InteractionBroker {
    */
   private shouldHoldForPhone(): boolean {
     return shouldHoldInteraction({
-      target: this.config.interactionTarget,
+      target: this.target,
       browserLive: this.browserWins(),
       foregroundPhone: this.phoneWins(),
       appConnected: this.appCanAnswer(),
@@ -492,8 +505,8 @@ export class InteractionBroker {
    * The app left the foreground (or stopped heartbeating). Any interaction it
    * was holding goes back to dsh so a connected browser can render it now.
    */
-  private releasePhoneHolds(): void {
-    if (this.hasForegroundPhone()) return
+  private releasePhoneHolds(force = false): void {
+    if (!force && this.hasForegroundPhone()) return
     for (const [id, pending] of [...this.questions]) {
       if (!pending.phoneHold) continue
       clearTimeout(pending.timer)
