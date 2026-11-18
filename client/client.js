@@ -40,11 +40,11 @@ window.__ModuleLoader__.load({
 .dd-row:last-child{border-bottom:none}
 .dd-rowText{display:flex;flex-direction:column;gap:4px;min-width:0}
 .dd-label{font-size:14px;color:var(--dsw-alias-label-primary)}
-.dd-control{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.dd-control{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;flex-shrink:0}
 .dd-block{display:flex;flex-direction:column;gap:8px;padding:16px 0;border-bottom:0.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.22))}
 .dd-code{font:600 20px ui-monospace,monospace;letter-spacing:3px;color:var(--dsw-alias-brand-primary,#3d7bfd)}
 .dd-segment{display:inline-flex;gap:2px;padding:2px;border-radius:9px;background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
-.dd-segmentButton{height:28px;padding:0 12px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-tertiary,#888);font:inherit;font-size:13px;cursor:pointer}
+.dd-segmentButton{height:28px;padding:0 12px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-tertiary,#888);font:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
 .dd-segmentButton.is-active{background:var(--dsw-alias-surface-primary,#fff);color:var(--dsw-alias-label-primary,#111);box-shadow:0 1px 2px rgba(0,0,0,.12)}
 .dd-countdown{font-size:12px;color:var(--dsw-alias-label-tertiary,#888);white-space:nowrap}
 .dd-modalBackdrop{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35)}
@@ -406,6 +406,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dd-row' },
               h('div', { className: 'dd-rowText' },
                 h('span', { className: 'dd-label' }, t('pairingCode')),
+                locked ? h('span', { className: 'dd-desc' }, t('lockHintOn')) : null,
               ),
               h('div', { className: 'dd-control' },
                 h('div', { className: 'dd-segment' },
@@ -432,9 +433,7 @@ window.__ModuleLoader__.load({
             ),
 
             locked
-              ? h('div', { className: 'dd-block' },
-                h('span', { className: 'dd-desc' }, t('lockHintOn')),
-              )
+              ? null
               : [
                 h('div', { className: 'dd-row', key: 'code' },
                   h('span', { className: 'dd-code' }, data?.formatted ?? '…'),
