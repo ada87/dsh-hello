@@ -200,7 +200,7 @@ On Windows PowerShell:
 
 ```powershell
 $env:DSH_HOME="$HOME\.dsh-dev"
-dsh plugin --profile web add link:D:/all-in-mobile/apps/dsh-hello
+dsh plugin --profile web add link:D:/all-in-dsh/apps/dsh-hello
 dsh web --port 4001
 ```
 
