@@ -86,6 +86,11 @@ window.__ModuleLoader__.load({
       nav: 'DSH Hello',
       title: 'DSH Hello',
       pairingCode: '配对码',
+      lockLabel: '允许新设备连接',
+      lockHintOff: '关闭后不再接受新设备配对；已连接的设备不受影响',
+      lockHintOn: '已锁定：新设备无法配对，已连接的设备照常使用',
+      lockAction: '锁定',
+      unlockAction: '解除锁定',
       oneTimeMode: '一次性',
       fixedMode: '永久性',
       oneTimeHint: '一次性码过期后自动换新码',
@@ -127,6 +132,11 @@ window.__ModuleLoader__.load({
       nav: 'DSH Hello',
       title: 'DSH Hello',
       pairingCode: 'Pairing code',
+      lockLabel: 'Accept new devices',
+      lockHintOff: 'Turn this off to stop accepting new devices; paired devices keep working',
+      lockHintOn: 'Locked: new devices cannot pair, while paired devices keep working',
+      lockAction: 'Lock',
+      unlockAction: 'Unlock',
       oneTimeMode: 'One-time',
       fixedMode: 'Permanent',
       oneTimeHint: 'A new code is generated when this one expires',
@@ -263,10 +273,33 @@ window.__ModuleLoader__.load({
           }
 
           const fixed = data?.fixed === true
+          const locked = data?.locked === true
           const remaining = !fixed && data ? Math.max(0, data.expiresAt - now) : null
           const left = remaining === null
             ? ''
             : `${Math.floor(remaining / 60000)}:${String(Math.floor((remaining % 60000) / 1000)).padStart(2, '0')}`
+
+          async function setLocked(next) {
+            setBusy(true)
+            setError(null)
+            try {
+              const response = await fetch(BASE + '/admin/lock' + adminBaseQuery(), {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ locked: next }),
+              })
+              if (!response.ok) {
+                const body = await response.json().catch(() => null)
+                throw new Error(body?.error?.message || t('operationFailed'))
+              }
+              setData(await response.json())
+            } catch (failure) {
+              setError(failure instanceof Error ? failure.message : String(failure))
+            } finally {
+              setBusy(false)
+            }
+          }
 
           const openPermanent = () => {
             setPassword('')
@@ -364,6 +397,21 @@ window.__ModuleLoader__.load({
             h('header', { className: 'dd-head' },
               h('h2', { className: 'dd-title' }, t('title'))),
             error === null ? null : h('p', { className: 'dd-error' }, error),
+
+            h('div', { className: 'dd-row' },
+              h('div', { className: 'dd-rowText' },
+                h('span', { className: 'dd-label' }, t('lockLabel')),
+                h('span', { className: 'dd-desc' }, locked ? t('lockHintOn') : t('lockHintOff')),
+              ),
+              h('div', { className: 'dd-control' },
+                h(Button, {
+                  variant: locked ? 'primary' : 'outline',
+                  size: 'sm',
+                  disabled: busy || data === null,
+                  onClick: () => { void setLocked(!locked) },
+                }, locked ? t('unlockAction') : t('lockAction')),
+              ),
+            ),
 
             h('div', { className: 'dd-row' },
               h('div', { className: 'dd-rowText' },

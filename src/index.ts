@@ -55,11 +55,11 @@ export async function apply(ctx: HostContext, rawConfig?: Partial<PluginConfig>)
   const push = new PushManager(config, devices, logger, credentials, hostOrigin.length > 0 ? `plugin:${hostOrigin}` : '')
   await push.load()
   const pairingRecordKey = 'dsh-hello/pairing' as unknown
-  const pairing = new PairingManager(config, logger, undefined, async (fixedCode) => {
+  const pairing = new PairingManager(config, logger, undefined, async (state) => {
     if (credentials === undefined) return
     await credentials.modifyRecord(pairingRecordKey, async () => ({
       kind: 'grant',
-      payload: { fixedCode },
+      payload: state,
     }))
   })
   if (credentials !== undefined) {
@@ -67,11 +67,12 @@ export async function apply(ctx: HostContext, rawConfig?: Partial<PluginConfig>)
       const record = await credentials.readRecord(pairingRecordKey)
       const payload = record?.payload
       if (typeof payload === 'object' && payload !== null) {
-        const fixed = (payload as { fixedCode?: unknown }).fixedCode
-        if (typeof fixed === 'string') await pairing.setFixedCode(fixed, false)
+        const { fixedCode, locked } = payload as { fixedCode?: unknown; locked?: unknown }
+        if (typeof fixedCode === 'string') await pairing.setFixedCode(fixedCode, false)
+        if (locked === true) await pairing.setLocked(true, false)
       }
     } catch (error) {
-      logger.warn(`[dsh-hello] could not load the fixed pairing code: ${shortError(error)}`)
+      logger.warn(`[dsh-hello] could not load the pairing settings: ${shortError(error)}`)
     }
   }
   const interactions = new InteractionBroker(host, config, hub, push, logger)

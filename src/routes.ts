@@ -133,6 +133,19 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
   })
 
   router.add({
+    method: 'POST',
+    pattern: '/admin/lock',
+    auth: 'public',
+    handler: async (rc) => {
+      if (!adminAuthorized(deps, rc)) throw new HttpError(401, 'admin-unauthorized', 'open this page from an authenticated dsh browser')
+      const body = (rc.body ?? {}) as { locked?: unknown }
+      if (typeof body.locked !== 'boolean') throw new HttpError(400, 'bad-lock', 'locked must be true or false')
+      await deps.pairing.setLocked(body.locked)
+      sendJson(rc.res, 200, await adminData(deps, requestBase(rc) ?? requestOrigin(deps, rc) ?? ''))
+    },
+  })
+
+  router.add({
     method: 'DELETE',
     pattern: '/admin/devices/:id',
     auth: 'public',
@@ -220,12 +233,17 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
       }
       const verification = deps.pairing.verify(body.code, rc.clientAddress)
       if (!verification.ok) {
-        const message = verification.reason === 'rate-limited'
-          ? 'too many pairing attempts from this address'
-          : verification.reason === 'expired'
-            ? 'the pairing code has expired; read the new code from the dsh terminal'
-            : 'the pairing code is invalid'
-        throw new HttpError(verification.reason === 'rate-limited' ? 429 : 401, `pair-${verification.reason}`, message)
+        const message = verification.reason === 'locked'
+          ? 'this Host is not accepting new devices; unlock pairing in the dsh settings first'
+          : verification.reason === 'rate-limited'
+            ? 'too many pairing attempts from this address'
+            : verification.reason === 'expired'
+              ? 'the pairing code has expired; read the new code from the dsh terminal'
+              : 'the pairing code is invalid'
+        const status = verification.reason === 'locked'
+          ? 403
+          : verification.reason === 'rate-limited' ? 429 : 401
+        throw new HttpError(status, `pair-${verification.reason}`, message)
       }
       const authority = rc.authority
       if (authority.length === 0) throw new HttpError(400, 'missing-host', 'the Host header is required')
@@ -1330,6 +1348,7 @@ async function adminData(deps: RouteDependencies, originBase: string): Promise<R
     code: view.code,
     formatted: view.formatted,
     fixed: view.fixed,
+    locked: deps.pairing.isLocked(),
     expiresAt: view.fixed ? null : view.expiresAt,
     origin,
     basePath: deps.config.basePath,

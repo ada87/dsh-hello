@@ -23,13 +23,15 @@ export class PairingManager {
   private code: string
   private expiresAt: number
   private fixedCode: string | null
+  /** A locked Host refuses new devices; paired devices keep working. */
+  private locked = false
   private readonly attempts = new Map<string, Attempts>()
 
   constructor(
     private readonly config: Config,
     private readonly logger: { info(message: string): void; warn(message: string): void },
     private readonly onRotate?: (code: string, expiresAt: number) => void,
-    private readonly persist?: (fixedCode: string | null) => Promise<void> | void,
+    private readonly persist?: (state: { fixedCode: string | null; locked: boolean }) => Promise<void> | void,
   ) {
     this.fixedCode = config.pairingCode === undefined ? null : normalizePairingCode(config.pairingCode)
     this.code = this.fixedCode ?? this.generate()
@@ -48,19 +50,37 @@ export class PairingManager {
   }
 
   /** Human-readable status for `/health`. */
-  status(): { pairingOpen: boolean; expiresAt: number; fixed: boolean } {
+  status(): { pairingOpen: boolean; expiresAt: number; fixed: boolean; locked: boolean } {
     this.ensureValid()
-    return { pairingOpen: true, expiresAt: this.expiresAt, fixed: this.fixedCode !== null }
+    return {
+      pairingOpen: !this.locked,
+      expiresAt: this.expiresAt,
+      fixed: this.fixedCode !== null,
+      locked: this.locked,
+    }
   }
 
   isFixed(): boolean {
     return this.fixedCode !== null
   }
 
+  isLocked(): boolean {
+    return this.locked
+  }
+
+  /** Close or reopen pairing. Existing devices are untouched. */
+  async setLocked(locked: boolean, persist = true): Promise<void> {
+    this.locked = locked
+    if (locked) this.logger.warn('[dsh-hello] pairing locked; no new devices will be accepted')
+    else this.logger.info('[dsh-hello] pairing unlocked; new devices may pair again')
+    if (persist) await this.safePersist()
+  }
+
   /** Verify one submitted code; consumes it on success unless it is fixed. */
-  verify(rawCode: string, clientAddress: string): { ok: true } | { ok: false; reason: 'invalid' | 'expired' | 'rate-limited' } {
+  verify(rawCode: string, clientAddress: string): { ok: true } | { ok: false; reason: 'invalid' | 'expired' | 'rate-limited' | 'locked' } {
     const now = Date.now()
     this.ensureValid()
+    if (this.locked) return { ok: false, reason: 'locked' }
     this.pruneAttempts(now)
     const record = this.attempts.get(clientAddress) ?? { count: 0, resetAt: now + this.config.pairingTtlMs }
     if (record.count >= this.config.pairingMaxAttempts) {
@@ -104,7 +124,7 @@ export class PairingManager {
       this.code = this.generate()
       this.expiresAt = Date.now() + this.config.pairingTtlMs
       this.logger.info(`[dsh-hello] fixed pairing code cleared; new one-time code ${formatPairingCode(this.code)}`)
-      if (persist) await this.safePersist(null)
+      if (persist) await this.safePersist()
       return this.current()
     }
     const normalized = normalizePairingCode(rawCode)
@@ -115,7 +135,7 @@ export class PairingManager {
     this.code = normalized
     this.expiresAt = Number.MAX_SAFE_INTEGER
     this.logger.warn(`[dsh-hello] fixed pairing code set to ${formatPairingCode(normalized)}; it stays valid until changed`)
-    if (persist) await this.safePersist(normalized)
+    if (persist) await this.safePersist()
     return this.current()
   }
 
@@ -127,11 +147,11 @@ export class PairingManager {
     if (this.fixedCode === null && Date.now() >= this.expiresAt) this.rotate()
   }
 
-  private async safePersist(fixedCode: string | null): Promise<void> {
+  private async safePersist(): Promise<void> {
     try {
-      await this.persist?.(fixedCode)
+      await this.persist?.({ fixedCode: this.fixedCode, locked: this.locked })
     } catch (error) {
-      this.logger.warn(`[dsh-hello] could not persist the fixed pairing code: ${error instanceof Error ? error.message : String(error)}`)
+      this.logger.warn(`[dsh-hello] could not persist the pairing settings: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 

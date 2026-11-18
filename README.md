@@ -153,18 +153,22 @@ runtime and locale dictionaries, so it follows the Web UI theme and language.
 
 The page shows:
 
+- a **lock** switch: while locked, `POST /pair` answers `403 pair-locked` and no
+  new device can join, while devices that are already paired keep working;
 - the current numeric code and expiry;
 - a QR payload (`{"v":1,"url":…,"code":…}`);
 - the paired-device table;
 - buttons to generate a new one-time code, set a **fixed code**, or restore
   one-time rotation.
 
-There is no standalone HTML page. The panel is contributed by `client/client.js`
-through the `settings.section` and `settings.section.icon` slots and reads two
-cookie-authenticated endpoints:
+The lock is persisted next to the fixed code in the credential store, so it
+survives a Host restart. There is no standalone HTML page. The panel is
+contributed by `client/client.js` through the `settings.section` and
+`settings.section.icon` slots and reads three cookie-authenticated endpoints:
 
-- `GET /admin/data` — current code, QR payload and device list;
-- `POST /admin/pair-code` — rotate, set or clear a fixed code.
+- `GET /admin/data` – current code, QR payload, lock state and device list;
+- `POST /admin/pair-code` – rotate, set or clear a fixed code;
+- `POST /admin/lock` – `{ "locked": true | false }`.
 
 Both are protected by the dsh browser session: the plugin calls
 `ctx.connection.admit()` on the request headers, with loopback accepted as a

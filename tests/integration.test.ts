@@ -1078,3 +1078,48 @@ async function waitForQuestion(current: FakeState): Promise<{ id: string; questi
   }
   assert.fail('question never became pending')
 }
+
+test('locking pairing refuses new devices while paired ones keep working', async () => {
+  const admin = await fetch(`${state.base}/admin/data`)
+  const before = await admin.json() as { formatted: string; locked: boolean }
+  assert.equal(before.locked, false)
+
+  const existing = await fetch(`${state.base}/sessions`, { headers: { authorization: `Bearer ${state.token}` } })
+  assert.equal(existing.status, 200, 'a paired device works before the lock')
+
+  const lock = await fetch(`${state.base}/admin/lock`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ locked: true }),
+  })
+  assert.equal(lock.status, 200)
+  assert.equal((await lock.json() as { locked: boolean }).locked, true)
+
+  const health = await fetch(`${state.base}/health`)
+  assert.equal((await health.json() as { pairingOpen: boolean }).pairingOpen, false)
+
+  const refused = await fetch(`${state.base}/pair`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: before.formatted, deviceName: 'late phone' }),
+  })
+  assert.equal(refused.status, 403)
+  assert.equal((await refused.json() as { error: { code: string } }).error.code, 'pair-locked')
+
+  const stillWorks = await fetch(`${state.base}/sessions`, { headers: { authorization: `Bearer ${state.token}` } })
+  assert.equal(stillWorks.status, 200, 'existing devices are unaffected by the lock')
+
+  const unlock = await fetch(`${state.base}/admin/lock`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ locked: false }),
+  })
+  assert.equal((await unlock.json() as { locked: boolean }).locked, false)
+
+  const accepted = await fetch(`${state.base}/pair`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: before.formatted, deviceName: 'phone after unlock' }),
+  })
+  assert.equal(accepted.status, 201)
+})
