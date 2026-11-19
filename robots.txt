@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://dsh.xdnote.com/sitemap.xml
