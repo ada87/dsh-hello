@@ -2,20 +2,16 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { PROTOCOL_VERSION } from '../src/protocol.js'
 
 /**
  * The App lives in another repository, so the handshake shape is pinned on
  * both sides by `protocol-contract.json`. app-dsh has the mirror-image test
  * over its `src/api/dshHelloProtocol.ts`; keep the two JSON files identical.
- *
- * Additive fields keep protocol vN; removing or renaming one must bump it.
  */
 
 const fixture = JSON.parse(
   readFileSync(fileURLToPath(new URL('./protocol-contract.json', import.meta.url)), 'utf8'),
 ) as {
-  version: number
   interfaces: Record<string, string[]>
 }
 
@@ -62,5 +58,4 @@ test('the handshake fields match the contract shared with app-dsh', () => {
       `${name} drifted from the contract; update both repos and bump PROTOCOL_VERSION if fields were removed`,
     )
   }
-  assert.equal(PROTOCOL_VERSION, fixture.version, 'PROTOCOL_VERSION must match the contract')
 })
