@@ -1,93 +1,46 @@
 import { open } from 'node:fs/promises'
 import {
-  agentPresetsAvailable,
   createWorkspace,
   currentSessionModel,
   listAgentPresets,
   listWorkspaces,
   modelCatalog,
-  modelsAvailable,
   renameWorkspace,
   selectSessionModel,
   setSessionArchived,
   setSessionPinned,
   uploadAttachment,
-  uploadsAvailable,
-  workspaceRenameAvailable,
-  workspacesAvailable,
   type ModelSelection,
 } from './catalogs.js'
 import { registerAdminRoutes } from './admin.js'
-import type { Config } from './config.js'
-import type { DeviceStore } from './devices.js'
+import { registerInteractionRoutes } from './interaction-routes.js'
+import { registerScheduleRoutes } from './schedule-routes.js'
+import { registerTerminalRoutes } from './terminal-routes.js'
+import { features, requestOrigin, serverFacts } from './server-facts.js'
 import { listWorkspaceFiles, listWorkspaceFilesByWorkspace, readWorkspaceFile, readWorkspaceFileByWorkspace, resolveWorkspaceBinary } from './files.js'
-import type { HostContext } from './host.js'
 import { HttpError, markStreaming, sendJson, sendNoContent, startSse, writeSse } from './http.js'
 import type { HttpRouter, RouteContext } from './http.js'
-import type { InteractionBroker } from './interactions.js'
-import type { PairingManager } from './pairing.js'
-import type { PushManager } from './push.js'
 import { parseReadState, tagReadService } from './read-state.js'
 import type {
-  ApprovalDecision,
   HealthResponse,
   PairRequest,
   PairResponse,
-  ServerFacts,
   SessionListResponse,
   SessionStateResponse,
   SessionTranscriptResponse,
 } from './protocol.js'
 import { PROTOCOL_VERSION } from './protocol.js'
-import type { SessionFacade } from './sessions.js'
-import {
-  deleteSchedule,
-  editSchedule,
-  listSchedules,
-  runSchedule,
-  scheduleActionsAvailable,
-  scheduleHistory,
-  scheduleHistoryAvailable,
-  schedulesAvailable,
-  sessionScheduleMarks,
-  viewSchedule,
-} from './schedules.js'
+import type { RouteDependencies } from './route-deps.js'
+import { normalizeAnswers } from './route-util.js'
 import { speechCatalog, transcribeSpeech } from './speech.js'
-import type { SseHub } from './streams.js'
-import type { TerminalEvent, TerminalManager } from './terminal.js'
 import { newId, shortError } from './util.js'
-
-export interface RouteDependencies {
-  config: Config
-  ctx: HostContext
-  devices: DeviceStore
-  pairing: PairingManager
-  hub: SseHub
-  interactions: InteractionBroker
-  push: PushManager
-  sessions: SessionFacade
-  terminals: TerminalManager
-  logger: {
-    info(message: string): void
-    warn(message: string): void
-    debug?(message: string): void
-  }
-  version: { version: string | null; compatible: boolean }
-  pluginVersion: string
-  /**
-   * Authenticated Web UI URL for this process, or `null` when the Host does not
-   * expose one. The app opens it to hand a pending interaction to the browser.
-   */
-  webUrl?: () => string | null
-  /** Persist and apply a new approvals/questions policy for this Host. */
-  saveInteractionTarget?: (target: Config['interactionTarget']) => Promise<void>
-  /** The policy currently in force (stored override or the config default). */
-  interactionTarget?: () => Config['interactionTarget']
-}
 
 export function registerRoutes(router: HttpRouter, deps: RouteDependencies): void {
   const { config } = deps
   registerAdminRoutes(router, { ...deps, requestOrigin: rc => requestOrigin(deps, rc) })
+  registerInteractionRoutes(router, deps)
+  registerScheduleRoutes(router, deps)
+  registerTerminalRoutes(router, deps)
 
   router.add({
     method: 'GET',
@@ -310,121 +263,6 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
         ...(typeof body.providerId === 'string' && body.providerId.length > 0 ? { providerId: body.providerId } : {}),
         ...(typeof body.language === 'string' && body.language.length > 0 ? { language: body.language } : {}),
       }, rc.signal)
-      sendJson(rc.res, 200, result)
-    },
-  })
-
-  router.add({
-    method: 'GET',
-    pattern: '/schedules',
-    auth: 'device',
-    handler: async (rc) => {
-      const result = await listSchedules(deps.ctx, rc.signal)
-      sendJson(rc.res, 200, result)
-    },
-  })
-
-  router.add({
-    method: 'GET',
-    pattern: '/schedule-marks',
-    auth: 'device',
-    handler: async (rc) => {
-      sendJson(rc.res, 200, await sessionScheduleMarks(deps.ctx, rc.signal))
-    },
-  })
-
-  router.add({
-    method: 'GET',
-    pattern: '/schedules/:id',
-    auth: 'device',
-    handler: async (rc) => {
-      const result = await viewSchedule(deps.ctx, rc.params.id!)
-      if (result === undefined) throw new HttpError(404, 'schedule-unavailable', 'the Host has no schedule service')
-      const code = scheduleCode(result)
-      if (code === 'schedule_not_found') throw new HttpError(404, 'schedule-not-found', 'the task no longer exists')
-      sendJson(rc.res, 200, result)
-    },
-  })
-
-  router.add({
-    method: 'GET',
-    pattern: '/schedules/:id/history',
-    auth: 'device',
-    handler: async (rc) => {
-      const rawLimit = rc.query.get('limit')
-      const parsed = rawLimit === null ? 20 : Number(rawLimit)
-      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
-        throw new HttpError(400, 'bad-limit', 'limit must be an integer from 1 to 100')
-      }
-      const before = rc.query.get('before') ?? undefined
-      const result = await scheduleHistory(deps.ctx, rc.params.id!, parsed, before)
-      if (result === undefined) throw new HttpError(404, 'schedule-unavailable', 'the Host has no schedule service')
-      const code = scheduleCode(result)
-      if (code === 'schedule_not_found') throw new HttpError(404, 'schedule-not-found', 'the task no longer exists')
-      if (code === 'delivery_cursor_not_found') throw new HttpError(404, 'delivery-cursor-not-found', 'the history cursor is no longer valid')
-      sendJson(rc.res, 200, result)
-    },
-  })
-
-  router.add({
-    method: 'POST',
-    pattern: '/schedules/:id/run',
-    auth: 'device',
-    handler: async (rc) => {
-      const result = await runSchedule(deps.ctx, rc.params.id!, rc.signal)
-      if (result === undefined) throw new HttpError(404, 'schedule-unavailable', 'the Host has no schedule service')
-      const code = scheduleCode(result)
-      if (code === 'schedule_not_found') throw new HttpError(404, 'schedule-not-found', 'the task no longer exists')
-      if (code === 'schedule_execution_pending') {
-        throw new HttpError(409, 'schedule-execution-pending', 'the task is already running or cooling down')
-      }
-      sendJson(rc.res, 200, result)
-    },
-  })
-
-  router.add({
-    method: 'PUT',
-    pattern: '/schedules/:id',
-    auth: 'device',
-    handler: async (rc) => {
-      const body = (rc.body ?? {}) as { active?: unknown; expectedUpdatedAt?: unknown }
-      if (typeof body.active !== 'boolean') {
-        throw new HttpError(400, 'bad-schedule-patch', 'active must be a boolean')
-      }
-      const expectedUpdatedAt = typeof body.expectedUpdatedAt === 'string' || body.expectedUpdatedAt === null
-        ? body.expectedUpdatedAt
-        : undefined
-      const result = await editSchedule(
-        deps.ctx,
-        rc.params.id!,
-        { active: body.active },
-        expectedUpdatedAt,
-        rc.signal,
-      )
-      if (result === undefined) throw new HttpError(404, 'schedule-unavailable', 'the Host has no schedule service')
-      const code = scheduleCode(result)
-      if (code === 'schedule_not_found') throw new HttpError(404, 'schedule-not-found', 'the task no longer exists')
-      if (code === 'schedule_conflict') throw new HttpError(409, 'schedule-conflict', 'the task changed on the Host')
-      sendJson(rc.res, 200, result)
-    },
-  })
-
-  router.add({
-    method: 'DELETE',
-    pattern: '/schedules/:id',
-    auth: 'device',
-    handler: async (rc) => {
-      const body = (rc.body ?? {}) as { expectedUpdatedAt?: unknown }
-      const fromBody = body.expectedUpdatedAt
-      const fromQuery = rc.query.get('expectedUpdatedAt') ?? undefined
-      const expectedUpdatedAt = typeof fromBody === 'string' || fromBody === null
-        ? fromBody
-        : fromQuery
-      const result = await deleteSchedule(deps.ctx, rc.params.id!, expectedUpdatedAt, rc.signal)
-      if (result === undefined) throw new HttpError(404, 'schedule-unavailable', 'the Host has no schedule service')
-      const code = scheduleCode(result)
-      if (code === 'schedule_not_found') throw new HttpError(404, 'schedule-not-found', 'the task no longer exists')
-      if (code === 'schedule_conflict') throw new HttpError(409, 'schedule-conflict', 'the task changed on the Host')
       sendJson(rc.res, 200, result)
     },
   })
@@ -897,311 +735,9 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
     },
   })
 
-  router.add({
-    method: 'GET',
-    pattern: '/sessions/:id/terminals',
-    auth: 'device',
-    handler: (rc) => {
-      sendJson(rc.res, 200, { items: deps.terminals.list(rc.params.id!) })
-    },
-  })
-
-  router.add({
-    method: 'POST',
-    pattern: '/sessions/:id/terminals',
-    auth: 'device',
-    handler: async (rc) => {
-      const sessionId = rc.params.id!
-      const body = rc.body as { cols?: unknown; rows?: unknown } | undefined
-      const state = await deps.sessions.state(sessionId, rc.signal)
-      const cwd = state.session.cwd
-      if (typeof cwd !== 'string' || cwd.length === 0) {
-        throw new HttpError(409, 'session-cwd-unknown', 'the session has no working directory yet')
-      }
-      const created = await deps.terminals.create(sessionId, cwd, {
-        ...(typeof body?.cols === 'number' ? { cols: body.cols } : {}),
-        ...(typeof body?.rows === 'number' ? { rows: body.rows } : {}),
-      })
-      sendJson(rc.res, 201, created)
-    },
-  })
-
-  router.add({
-    method: 'GET',
-    pattern: '/sessions/:id/terminals/:terminalId/events',
-    auth: 'device',
-    handler: async (rc) => {
-      const sessionId = rc.params.id!
-      const terminalId = rc.params.terminalId!
-      // Resolve before headers so a missing terminal is a JSON 404.
-      const snapshot = deps.terminals.snapshot(sessionId, terminalId)
-      markStreaming(rc.res)
-      startSse(rc.res)
-      const heartbeat = setInterval(() => writeSse(rc.res, 'heartbeat', { time: Date.now() }), 15_000)
-      heartbeat.unref?.()
-      let ready = false
-      const pending: TerminalEvent[] = []
-      let release: () => void = () => undefined
-      const stopped = new Promise<void>(resolve => { release = resolve })
-      const shutdown = (): void => {
-        if (!rc.res.writableEnded) rc.res.end()
-        release()
-      }
-      // Subscribe before the snapshot is sent, then flush anything that raced
-      // in while the reconnect replay was being written.
-      const unsubscribe = deps.terminals.subscribe(sessionId, terminalId, event => {
-        if (!ready) {
-          pending.push(event)
-          return
-        }
-        writeSse(rc.res, event.type, event)
-      })
-      rc.signal.addEventListener('abort', shutdown)
-      const untrack = deps.hub.trackDevice(rc.device!.deviceId, shutdown)
-      writeSse(rc.res, 'ready', { ...snapshot, time: Date.now() })
-      ready = true
-      for (const event of pending.splice(0)) writeSse(rc.res, event.type, event)
-      try {
-        await stopped
-      } finally {
-        untrack()
-        rc.signal.removeEventListener('abort', shutdown)
-        unsubscribe()
-        clearInterval(heartbeat)
-        if (!rc.res.writableEnded) rc.res.end()
-      }
-    },
-  })
-
-  router.add({
-    method: 'POST',
-    pattern: '/sessions/:id/terminals/:terminalId/input',
-    auth: 'device',
-    handler: async (rc) => {
-      const body = rc.body as { data?: unknown } | undefined
-      const data = body?.data
-      if (typeof data !== 'string' || data.length === 0) {
-        throw new HttpError(400, 'bad-input', 'data must be a non-empty string')
-      }
-      if (data.length > 65_536) throw new HttpError(413, 'input-too-large', 'terminal input is limited to 64 KiB')
-      await deps.terminals.write(rc.params.id!, rc.params.terminalId!, data)
-      sendJson(rc.res, 200, { accepted: true })
-    },
-  })
-
-  router.add({
-    method: 'POST',
-    pattern: '/sessions/:id/terminals/:terminalId/resize',
-    auth: 'device',
-    handler: async (rc) => {
-      const body = rc.body as { cols?: unknown; rows?: unknown } | undefined
-      if (typeof body?.cols !== 'number' || typeof body?.rows !== 'number') {
-        throw new HttpError(400, 'bad-size', 'cols and rows must be numbers')
-      }
-      const info = await deps.terminals.resize(rc.params.id!, rc.params.terminalId!, body.cols, body.rows)
-      sendJson(rc.res, 200, info)
-    },
-  })
-
-  router.add({
-    method: 'DELETE',
-    pattern: '/sessions/:id/terminals/:terminalId',
-    auth: 'device',
-    handler: async (rc) => {
-      const closed = await deps.terminals.close(rc.params.id!, rc.params.terminalId!)
-      if (!closed) throw new HttpError(404, 'terminal-not-found', 'no such terminal in this session')
-      sendNoContent(rc.res)
-    },
-  })
-
-  router.add({
-    method: 'GET',
-    pattern: '/events',
-    auth: 'device',
-    handler: (rc) => {
-      markStreaming(rc.res)
-      const clientId = newId()
-      deps.hub.add(clientId, rc.device!.deviceId, rc.res)
-      writeSse(rc.res, 'hello', {
-        server: serverFacts(deps, requestOrigin(deps, rc)),
-        features: features(deps),
-        pendingApprovals: deps.interactions.listApprovals(),
-        pendingQuestions: deps.interactions.listQuestions(),
-        time: Date.now(),
-      })
-      rc.req.on('close', () => {
-        // `SseHub` removes the response on close; nothing else is owned here.
-      })
-    },
-  })
-
-  router.add({
-    method: 'GET',
-    pattern: '/approvals',
-    auth: 'device',
-    handler: (rc) => {
-      sendJson(rc.res, 200, { items: deps.interactions.listApprovals() })
-    },
-  })
-
-  router.add({
-    method: 'POST',
-    pattern: '/approvals/:id',
-    auth: 'device',
-    handler: (rc) => {
-      const body = rc.body as { decision?: unknown } | undefined
-      const decision = body?.decision
-      if (decision !== 'allow' && decision !== 'deny' && decision !== 'always' && decision !== 'later') {
-        throw new HttpError(400, 'bad-decision', 'decision must be allow, deny, always, or later')
-      }
-      const item = deps.interactions.decideApproval(rc.params.id!, decision as ApprovalDecision)
-      if (item === undefined) throw new HttpError(404, 'approval-not-found', 'the approval is no longer pending')
-      sendJson(rc.res, 200, { accepted: true, decision })
-    },
-  })
-
-  router.add({
-    method: 'POST',
-    pattern: '/presence',
-    auth: 'device',
-    handler: (rc) => {
-      const body = rc.body as { foreground?: unknown } | undefined
-      if (typeof body?.foreground !== 'boolean') {
-        throw new HttpError(400, 'bad-presence', 'foreground must be a boolean')
-      }
-      const device = rc.device
-      if (device === undefined) throw new HttpError(401, 'unauthenticated', 'a valid device token is required')
-      deps.interactions.setPresence(device.deviceId, body.foreground)
-      sendJson(rc.res, 200, { accepted: true })
-    },
-  })
-
-  router.add({
-    method: 'GET',
-    pattern: '/questions',
-    auth: 'device',
-    handler: (rc) => {
-      sendJson(rc.res, 200, { items: deps.interactions.listQuestions() })
-    },
-  })
-
-  router.add({
-    method: 'POST',
-    pattern: '/questions/:id/answer',
-    auth: 'device',
-    handler: (rc) => {
-      const body = rc.body as { answers?: unknown } | undefined
-      const answers = normalizeAnswers(body?.answers)
-      const answered = deps.interactions.answerQuestion(rc.params.id!, { answers })
-      if (answered === undefined) throw new HttpError(404, 'question-not-found', 'the question is no longer pending')
-      sendJson(rc.res, 200, { accepted: true })
-    },
-  })
-
-  if (config.enableDebugRoutes) {
-    router.add({
-      method: 'POST',
-      pattern: '/debug/approval',
-      auth: 'device',
-      handler: (rc) => {
-        const body = (rc.body ?? {}) as {
-          sessionId?: unknown
-          toolName?: unknown
-          reason?: unknown
-          displayReason?: unknown
-        }
-        const item = deps.interactions.createDebugApproval({
-          ...(typeof body.sessionId === 'string' ? { sessionId: body.sessionId } : {}),
-          ...(typeof body.toolName === 'string' ? { toolName: body.toolName } : {}),
-          ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
-          ...(typeof body.displayReason === 'object' && body.displayReason !== null
-            ? { displayReason: body.displayReason as { en: string; [locale: string]: string } }
-            : {}),
-        })
-        sendJson(rc.res, 201, item)
-      },
-    })
-    router.add({
-      method: 'POST',
-      pattern: '/debug/question',
-      auth: 'device',
-      handler: (rc) => {
-        const body = (rc.body ?? {}) as { sessionId?: unknown; questions?: unknown }
-        const item = deps.interactions.createDebugQuestion({
-          ...(typeof body.sessionId === 'string' ? { sessionId: body.sessionId } : {}),
-          ...(Array.isArray(body.questions) ? { questions: body.questions as never } : {}),
-        })
-        sendJson(rc.res, 201, item)
-      },
-    })
-    deps.logger.warn('[dsh-hello] debug interaction routes are enabled')
-  }
-
   deps.logger.info(
     `[dsh-hello] routes mounted at ${config.basePath} (protocol ${PROTOCOL_VERSION}, push ${config.push.provider})`,
   )
-}
-
-function serverFacts(deps: RouteDependencies, originOverride?: string | null): ServerFacts {
-  const web = deps.ctx.webServer
-  let fallback: string | null = null
-  try {
-    fallback = typeof web.getOrigin === 'function' ? web.getOrigin() : null
-  } catch {
-    fallback = null
-  }
-  const origin = originOverride ?? fallback
-  return {
-    name: 'dsh-hello',
-    version: deps.pluginVersion,
-    protocol: PROTOCOL_VERSION,
-    dshVersion: deps.version.version,
-    dshCompatible: deps.version.compatible,
-    origin,
-    protocolName: origin !== null && origin.startsWith('https://') ? 'https' : web.protocol === 'https:' ? 'https' : 'http',
-    host: web.host ?? null,
-    port: web.port ?? null,
-  }
-}
-
-/** `scheme://authority` as the client reached this request, or null when unknown. */
-function requestOrigin(deps: RouteDependencies, rc: RouteContext): string | null {
-  if (rc.authority.length === 0) return null
-  const scheme = deps.ctx.webServer.protocol === 'https:' ? 'https' : 'http'
-  return `${scheme}://${rc.authority}`
-}
-
-function scheduleCode(result: unknown): string | undefined {
-  if (typeof result !== 'object' || result === null) return undefined
-  const code = (result as { code?: unknown }).code
-  return typeof code === 'string' ? code : undefined
-}
-
-function features(deps: RouteDependencies): HealthResponse['features'] {
-  const target = deps.interactionTarget?.() ?? deps.config.interactionTarget
-  return {
-    approvals: target !== 'browser-only',
-    questions: target !== 'browser-only',
-    interactionTarget: target,
-    presence: true,
-    push: deps.push.isConfigured(),
-    debugRoutes: deps.config.enableDebugRoutes,
-    terminal: deps.terminals.available(),
-    files: true,
-    workspaces: workspacesAvailable(deps.ctx),
-    workspaceRename: workspaceRenameAvailable(deps.ctx),
-    archive: workspacesAvailable(deps.ctx),
-    pin: workspacesAvailable(deps.ctx),
-    agentPresets: agentPresetsAvailable(deps.ctx),
-    models: modelsAvailable(deps.ctx),
-    uploads: uploadsAvailable(deps.ctx),
-    readState: tagReadService(deps.ctx) !== undefined,
-    schedules: schedulesAvailable(deps.ctx),
-    scheduleActions: scheduleActionsAvailable(deps.ctx),
-    scheduleHistory: scheduleHistoryAvailable(deps.ctx),
-    sessionEvents: 'sse',
-    protocol: PROTOCOL_VERSION,
-  }
 }
 
 function assertLoopback(rc: RouteContext): void {
@@ -1227,24 +763,6 @@ function randomPairingToken(): string {
   const bytes = new Uint8Array(32)
   globalThis.crypto.getRandomValues(bytes)
   return `dshd_${Buffer.from(bytes).toString('base64url')}`
-}
-
-function normalizeAnswers(value: unknown): Array<{ id: string; selected: string[]; custom?: string }> {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new HttpError(400, 'bad-answers', 'answers must be a non-empty array')
-  }
-  return value.map((item) => {
-    if (typeof item !== 'object' || item === null) throw new HttpError(400, 'bad-answers', 'each answer must be an object')
-    const candidate = item as { id?: unknown; selected?: unknown; custom?: unknown }
-    if (typeof candidate.id !== 'string' || !Array.isArray(candidate.selected) || !candidate.selected.every(label => typeof label === 'string')) {
-      throw new HttpError(400, 'bad-answers', 'each answer needs an id and a selected string array')
-    }
-    return {
-      id: candidate.id,
-      selected: candidate.selected,
-      ...(typeof candidate.custom === 'string' ? { custom: candidate.custom } : {}),
-    }
-  })
 }
 
 async function sendBinary(rc: RouteContext, file: { filename: string; size: number; contentType: string }): Promise<void> {
