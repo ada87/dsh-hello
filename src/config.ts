@@ -128,11 +128,8 @@ export const Config: Schema<Config> = Schema.object({
   maxBodyBytes: Schema.number().default(64 * 1024),
   rateLimitWindowMs: Schema.number().default(60 * 1000),
   rateLimitMax: Schema.number().default(240),
-  /**
-   * @deprecated 0.2.2 — 0.2.1 fallback only; the default floor moves to 0.2.2.
-   * @since 0.2.1
-   */
-  dshVersionRange: Schema.string().default('>=0.2.1-rc.4 <0.3.0'),
+  /** SemVer range of dsh runtimes this plugin supports. */
+  dshVersionRange: Schema.string().default('>=0.2.2-0 <0.3.0'),
   push: Schema.object({
     provider: Schema.union(['none', 'fcm', 'apns', 'relay'] as const).default('none'),
     relayUrl: Schema.string(),
@@ -171,7 +168,7 @@ export function normalizeConfig(input: Partial<Config> | undefined): Config {
     maxBodyBytes: raw.maxBodyBytes ?? 64 * 1024,
     rateLimitWindowMs: raw.rateLimitWindowMs ?? 60 * 1000,
     rateLimitMax: raw.rateLimitMax ?? 240,
-    dshVersionRange: raw.dshVersionRange ?? '>=0.2.1-rc.4 <0.3.0',
+    dshVersionRange: raw.dshVersionRange ?? '>=0.2.2-0 <0.3.0',
     push: {
       provider: push.provider ?? 'none',
       relayUrl: push.relayUrl,

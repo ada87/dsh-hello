@@ -1,4 +1,4 @@
-import type { CredentialProviderService, HostContext } from './host.js'
+import type { CredentialProviderService } from './host.js'
 import { fingerprint, safeEqual, sha256 } from './util.js'
 
 /** Credential record key owned by this plugin. */
@@ -71,7 +71,6 @@ export class DeviceStore {
   private writeQueue: Promise<void> = Promise.resolve()
 
   constructor(
-    private readonly ctx: HostContext,
     private readonly credentials: CredentialProviderService | undefined,
   ) {}
 
@@ -99,11 +98,6 @@ export class DeviceStore {
 
   count(): number {
     return this.devices.size
-  }
-
-  findById(deviceId: string): DeviceView | undefined {
-    const device = this.devices.get(deviceId)
-    return device === undefined ? undefined : toView(device)
   }
 
   /** Resolve a bearer token to its device and update last-seen time. */
@@ -161,15 +155,6 @@ export class DeviceStore {
     this.remember(device)
     await this.persist()
     return toView(device)
-  }
-
-  async addAuthority(deviceId: string, authority: string): Promise<void> {
-    const device = this.devices.get(deviceId)
-    if (device === undefined) return
-    if (!device.authorities.includes(authority)) {
-      device.authorities = [...device.authorities, authority]
-      await this.persist()
-    }
   }
 
   async revoke(deviceId: string): Promise<boolean> {

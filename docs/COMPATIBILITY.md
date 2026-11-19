@@ -4,8 +4,8 @@ Generated from [`compat.json`](../compat.json). Do not edit by hand; run `pnpm c
 
 | | |
 |---|---|
-| Plugin | `dsh-hello` **0.1.6** |
-| dsh range | `>=0.2.1-rc.4 <0.3.0` |
+| Plugin | `dsh-hello` **0.1.5** |
+| dsh range | `>=0.2.2-0 <0.3.0` |
 | Protocol | 1 |
 | App minimum | 0.1.0 |
 | Updated | 2026-11-17 |
@@ -22,4 +22,4 @@ Generated from [`compat.json`](../compat.json). Do not edit by hand; run `pnpm c
 
 Extra policy notes: [COMPATIBILITY-NOTES.md](COMPATIBILITY-NOTES.md).
 
-Install: `dsh plugin --profile web add dsh-hello@0.1.6`
+Install: `dsh plugin --profile web add dsh-hello@0.1.5`

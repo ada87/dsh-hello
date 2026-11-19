@@ -1,6 +1,4 @@
 import { open } from 'node:fs/promises'
-import qrCore from 'qrcode/lib/core/qrcode'
-import qrSvg from 'qrcode/lib/renderer/svg'
 import {
   agentPresetsAvailable,
   createWorkspace,
@@ -19,6 +17,7 @@ import {
   workspacesAvailable,
   type ModelSelection,
 } from './catalogs.js'
+import { registerAdminRoutes } from './admin.js'
 import type { Config } from './config.js'
 import type { DeviceStore } from './devices.js'
 import { listWorkspaceFiles, listWorkspaceFilesByWorkspace, readWorkspaceFile, readWorkspaceFileByWorkspace, resolveWorkspaceBinary } from './files.js'
@@ -88,6 +87,7 @@ export interface RouteDependencies {
 
 export function registerRoutes(router: HttpRouter, deps: RouteDependencies): void {
   const { config } = deps
+  registerAdminRoutes(router, { ...deps, requestOrigin: rc => requestOrigin(deps, rc) })
 
   router.add({
     method: 'GET',
@@ -105,99 +105,6 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
         time: Date.now(),
       }
       sendJson(rc.res, 200, response)
-    },
-  })
-
-  router.add({
-    method: 'GET',
-    pattern: '/admin/data',
-    auth: 'public',
-    handler: async (rc) => {
-      if (!adminAuthorized(deps, rc)) throw new HttpError(401, 'admin-unauthorized', 'open this page from an authenticated dsh browser')
-      sendJson(rc.res, 200, await adminData(deps, requestBase(rc) ?? requestOrigin(deps, rc) ?? ''))
-    },
-  })
-
-  router.add({
-    method: 'POST',
-    pattern: '/admin/pair-code',
-    auth: 'public',
-    handler: async (rc) => {
-      if (!adminAuthorized(deps, rc)) throw new HttpError(401, 'admin-unauthorized', 'open this page from an authenticated dsh browser')
-      const body = (rc.body ?? {}) as { action?: unknown; code?: unknown }
-      try {
-        if (body.action === 'fixed') {
-          if (typeof body.code !== 'string') throw new HttpError(400, 'bad-code', 'code is required')
-          await deps.pairing.setFixedCode(body.code)
-        } else if (body.action === 'auto' || body.action === 'rotate') {
-          if (body.action === 'auto') await deps.pairing.setFixedCode(null)
-          else deps.pairing.rotate()
-        } else {
-          throw new HttpError(400, 'bad-action', 'action must be rotate, fixed, or auto')
-        }
-      } catch (error) {
-        if (error instanceof HttpError) throw error
-        throw new HttpError(400, 'bad-code', error instanceof Error ? error.message : String(error))
-      }
-      sendJson(rc.res, 200, await adminData(deps, requestBase(rc) ?? requestOrigin(deps, rc) ?? ''))
-    },
-  })
-
-  router.add({
-    method: 'POST',
-    pattern: '/admin/interaction',
-    auth: 'public',
-    handler: async (rc) => {
-      if (!adminAuthorized(deps, rc)) throw new HttpError(401, 'admin-unauthorized', 'open this page from an authenticated dsh browser')
-      const body = (rc.body ?? {}) as { target?: unknown }
-      const target = body.target
-      if (target !== 'phone-first' && target !== 'browser-first' && target !== 'browser-only') {
-        throw new HttpError(400, 'bad-target', 'target must be phone-first, browser-first, or browser-only')
-      }
-      if (deps.saveInteractionTarget === undefined) throw new HttpError(503, 'interaction-unavailable', 'this Host cannot change the interaction policy')
-      await deps.saveInteractionTarget(target)
-      sendJson(rc.res, 200, await adminData(deps, requestBase(rc) ?? requestOrigin(deps, rc) ?? ''))
-    },
-  })
-
-  router.add({
-    method: 'POST',
-    pattern: '/admin/lock',
-    auth: 'public',
-    handler: async (rc) => {
-      if (!adminAuthorized(deps, rc)) throw new HttpError(401, 'admin-unauthorized', 'open this page from an authenticated dsh browser')
-      const body = (rc.body ?? {}) as { locked?: unknown }
-      if (typeof body.locked !== 'boolean') throw new HttpError(400, 'bad-lock', 'locked must be true or false')
-      await deps.pairing.setLocked(body.locked)
-      sendJson(rc.res, 200, await adminData(deps, requestBase(rc) ?? requestOrigin(deps, rc) ?? ''))
-    },
-  })
-
-  router.add({
-    method: 'DELETE',
-    pattern: '/admin/devices/:id',
-    auth: 'public',
-    handler: async (rc) => {
-      if (!adminAuthorized(deps, rc)) throw new HttpError(401, 'admin-unauthorized', 'open this page from an authenticated dsh browser')
-      const removed = await deps.devices.revoke(rc.params.id!)
-      if (!removed) throw new HttpError(404, 'device-not-found', 'no such device')
-      deps.hub.closeDevice(rc.params.id!)
-      sendJson(rc.res, 200, await adminData(deps, requestBase(rc) ?? requestOrigin(deps, rc) ?? ''))
-    },
-  })
-
-  router.add({
-    method: 'PUT',
-    pattern: '/admin/devices/:id',
-    auth: 'public',
-    handler: async (rc) => {
-      if (!adminAuthorized(deps, rc)) throw new HttpError(401, 'admin-unauthorized', 'open this page from an authenticated dsh browser')
-      const body = (rc.body ?? {}) as { name?: unknown }
-      const name = typeof body.name === 'string' ? body.name.trim().slice(0, 120) : ''
-      if (name.length === 0) throw new HttpError(400, 'bad-device-name', 'a non-empty device name is required')
-      const renamed = await deps.devices.rename(rc.params.id!, name)
-      if (!renamed) throw new HttpError(404, 'device-not-found', 'no such device')
-      sendJson(rc.res, 200, await adminData(deps, requestBase(rc) ?? requestOrigin(deps, rc) ?? ''))
     },
   })
 
@@ -239,13 +146,11 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
         url: `${origin}${config.basePath}`,
         code: current.code,
       })
-      const qr = await renderQr(payload)
       sendJson(rc.res, 200, {
         code: current.code,
         formatted: current.formatted,
         expiresAt: current.expiresAt,
         payload,
-        qr,
       })
     },
   })
@@ -433,7 +338,7 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
     pattern: '/schedules/:id',
     auth: 'device',
     handler: async (rc) => {
-      const result = await viewSchedule(deps.ctx, rc.params.id!, rc.signal)
+      const result = await viewSchedule(deps.ctx, rc.params.id!)
       if (result === undefined) throw new HttpError(404, 'schedule-unavailable', 'the Host has no schedule service')
       const code = scheduleCode(result)
       if (code === 'schedule_not_found') throw new HttpError(404, 'schedule-not-found', 'the task no longer exists')
@@ -452,7 +357,7 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
         throw new HttpError(400, 'bad-limit', 'limit must be an integer from 1 to 100')
       }
       const before = rc.query.get('before') ?? undefined
-      const result = await scheduleHistory(deps.ctx, rc.params.id!, parsed, before, rc.signal)
+      const result = await scheduleHistory(deps.ctx, rc.params.id!, parsed, before)
       if (result === undefined) throw new HttpError(404, 'schedule-unavailable', 'the Host has no schedule service')
       const code = scheduleCode(result)
       if (code === 'schedule_not_found') throw new HttpError(404, 'schedule-not-found', 'the task no longer exists')
@@ -583,7 +488,6 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
         deps.ctx,
         rc.params.id!,
         rc.query.get('path') ?? '',
-        rc.signal,
       )
       sendJson(rc.res, 200, response)
     },
@@ -597,7 +501,7 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
       const path = rc.query.get('path')
       if (path === null || path.length === 0) throw new HttpError(400, 'empty-path', 'path is required')
       const offset = numberParam(rc.query.get('offset')) ?? 0
-      const response = await readWorkspaceFileByWorkspace(deps.ctx, rc.params.id!, path, rc.signal, offset)
+      const response = await readWorkspaceFileByWorkspace(deps.ctx, rc.params.id!, path, offset)
       sendJson(rc.res, 200, response)
     },
   })
@@ -871,9 +775,6 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
       const body = (rc.body ?? {}) as { atSeq?: unknown }
       if (body.atSeq !== undefined && (!Number.isSafeInteger(body.atSeq) || (body.atSeq as number) < 0)) {
         throw new HttpError(400, 'invalid-fork-seq', 'atSeq must be a non-negative safe integer')
-      }
-      if (typeof deps.ctx.sessionController.fork !== 'function') {
-        throw new HttpError(501, 'fork-unavailable', 'this dsh version does not expose session/fork')
       }
       const forked = await deps.sessions.fork(
         rc.params.id!,
@@ -1346,72 +1247,6 @@ function normalizeAnswers(value: unknown): Array<{ id: string; selected: string[
   })
 }
 
-function adminAuthorized(deps: RouteDependencies, rc: RouteContext): boolean {
-  const connection = deps.ctx.get('connection') as
-    | { admit(request: { headers: Record<string, string | string[] | undefined> }): { peer?: unknown; rejection?: number } }
-    | undefined
-  if (connection !== undefined && typeof connection.admit === 'function') {
-    try {
-      const admission = connection.admit({ headers: rc.req.headers })
-      if (admission.peer !== undefined) return true
-    } catch {
-      // Fall through to the loopback check.
-    }
-  }
-  return rc.clientAddress === '127.0.0.1' || rc.clientAddress === '::1' || rc.clientAddress.startsWith('127.')
-}
-
-async function adminData(deps: RouteDependencies, originBase: string): Promise<Record<string, unknown>> {
-  const view = deps.pairing.current()
-  const origin = originBase
-  const payload = JSON.stringify({ v: 1, url: `${origin}${deps.config.basePath}`, code: view.code })
-  const qr = await renderQr(payload)
-  const { svg: qrSvg, error: qrError } = await renderQrSvg(payload)
-  return {
-    code: view.code,
-    formatted: view.formatted,
-    fixed: view.fixed,
-    locked: deps.pairing.isLocked(),
-    interactionTarget: deps.interactionTarget?.() ?? deps.config.interactionTarget,
-    expiresAt: view.fixed ? null : view.expiresAt,
-    origin,
-    basePath: deps.config.basePath,
-    qr,
-    qrSvg,
-    qrError,
-    time: Date.now(),
-    devices: deps.devices.list().map(device => ({
-      deviceId: device.deviceId,
-      deviceName: device.deviceName,
-      platform: device.platform,
-      appVersion: device.appVersion,
-      authorities: device.authorities,
-      pairedAt: device.pairedAt,
-      lastSeenAt: device.lastSeenAt,
-      push: device.push !== undefined,
-    })),
-  }
-}
-
-/**
- * The admin page sends the base directory it was loaded from (`new URL('.',
- * location.href)`). It is the URL the user is actually using, so the Settings
- * QR follows the public URL without any Host-side public-URL configuration.
- * A loopback page yields a loopback QR; the phone can edit the address.
- */
-function requestBase(rc: RouteContext): string | null {
-  const value = rc.query.get('base')
-  if (value === null || value.length === 0 || value.length > 2048) return null
-  try {
-    const url = new URL(value)
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
-    if (url.username !== '' || url.password !== '' || url.search !== '' || url.hash !== '') return null
-    return `${url.origin}${url.pathname.replace(/\/+$/, '')}`
-  } catch {
-    return null
-  }
-}
-
 async function sendBinary(rc: RouteContext, file: { filename: string; size: number; contentType: string }): Promise<void> {
   const offset = numberParam(rc.query.get('offset')) ?? 0
   const limit = Math.min(Math.max(numberParam(rc.query.get('limit')) ?? 512 * 1024, 1), 2 * 1024 * 1024)
@@ -1437,64 +1272,4 @@ async function sendBinary(rc: RouteContext, file: { filename: string; size: numb
     nextOffset: offset + bytesRead < file.size ? offset + bytesRead : undefined,
     dataBase64: chunk.toString('base64'),
   })
-}
-
-async function renderQr(text: string): Promise<string | null> {
-  const candidates: unknown[] = []
-  try {
-    const mod = (await import('qrcode-terminal')) as { default?: { default?: unknown } }
-    candidates.push(mod.default, mod.default?.default, mod)
-  } catch {
-    // Fall through to the CommonJS require below.
-  }
-  try {
-    const { createRequire } = await import('node:module')
-    candidates.push(createRequire(import.meta.url)('qrcode-terminal'))
-  } catch {
-    // No terminal QR without the package; callers treat null as "no QR".
-  }
-  for (const candidate of candidates) {
-    const generate = (candidate as { generate?: unknown } | null)?.generate
-    if (typeof generate !== 'function') continue
-    try {
-      return await new Promise<string>((resolve) => {
-        ;(candidate as { generate(input: string, options: unknown, done: (output: string) => void): void })
-          .generate(text, { small: true }, resolve)
-      })
-    } catch {
-      continue
-    }
-  }
-  return null
-}
-
-/**
- * Build the pairing QR without `qrcode`'s entry point.
- *
- * `qrcode/lib/index.js` -> `server.js` loads the PNG renderer, and that pulls
- * `pngjs`, whose `require('fs')` cannot run inside an ESM bundle. The SVG
- * renderer and the core encoder are pure JavaScript, so importing them
- * directly keeps the QR dependency bundled and free of runtime resolution.
- */
-async function renderQrSvg(text: string): Promise<{ svg: string | null; error: string | null }> {
-  try {
-    const data = qrCore.create(text, { errorCorrectionLevel: 'M' })
-    const svg = qrSvg.render(data, {
-      margin: 1,
-      width: 320,
-      color: { dark: '#0b0e14', light: '#ffffff' },
-    })
-    if (typeof svg !== 'string') {
-      console.warn('[dsh-hello] QR encoder returned', typeof svg, 'instead of an SVG string')
-      return { svg: null, error: `encoder-returned-${typeof svg}` }
-    }
-    if (!svg.trimStart().startsWith('<svg')) {
-      console.warn('[dsh-hello] QR encoder returned a non-SVG string:', svg.slice(0, 80))
-      return { svg: null, error: `encoder-returned-text:${svg.trim().slice(0, 40)}` }
-    }
-    return { svg, error: null }
-  } catch (error) {
-    console.warn('[dsh-hello] QR SVG generation failed:', error)
-    return { svg: null, error: `encoder-failed:${error instanceof Error ? error.message : String(error)}`.slice(0, 200) }
-  }
 }

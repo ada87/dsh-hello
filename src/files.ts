@@ -40,7 +40,7 @@ export async function listWorkspaceFiles(
   requestedPath: string,
   signal: AbortSignal,
 ): Promise<WorkspaceFileList> {
-  return listDirectory(ctx, await workspaceRoot(ctx, sessionId, signal), requestedPath)
+  return listDirectory(await workspaceRoot(ctx, sessionId, signal), requestedPath)
 }
 
 /** List a Workspace directory without needing a Session (the file browser entry). */
@@ -48,13 +48,11 @@ export async function listWorkspaceFilesByWorkspace(
   ctx: HostContext,
   workspaceId: string,
   requestedPath: string,
-  signal: AbortSignal,
 ): Promise<WorkspaceFileList> {
-  return listDirectory(ctx, await workspaceRootById(ctx, workspaceId), requestedPath)
+  return listDirectory(await workspaceRootById(ctx, workspaceId), requestedPath)
 }
 
 async function listDirectory(
-  ctx: HostContext,
   root: { root: string; rootReal: string },
   requestedPath: string,
 ): Promise<WorkspaceFileList> {
@@ -95,7 +93,6 @@ export async function readWorkspaceFileByWorkspace(
   ctx: HostContext,
   workspaceId: string,
   requestedPath: string,
-  signal: AbortSignal,
   offset = 0,
 ): Promise<WorkspaceFileContent> {
   return readFileAt(await workspaceRootById(ctx, workspaceId), requestedPath, offset)

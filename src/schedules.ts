@@ -100,7 +100,6 @@ export function scheduleHistoryAvailable(ctx: HostContext): boolean {
 export async function viewSchedule(
   ctx: HostContext,
   id: string,
-  signal?: AbortSignal,
 ): Promise<unknown | undefined> {
   const service = getScheduleService(ctx)
   if (service?.view === undefined) return undefined
@@ -112,7 +111,6 @@ export async function scheduleHistory(
   id: string,
   limit: number,
   before?: string,
-  signal?: AbortSignal,
 ): Promise<unknown | undefined> {
   const service = getScheduleService(ctx)
   if (service?.history === undefined) return undefined

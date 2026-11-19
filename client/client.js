@@ -26,8 +26,8 @@ window.__ModuleLoader__.load({
       ]
     }
 
-    const NS = 'dshDoorAdmin'
-    const injected = globalThis.__DSH_DOOR__
+    const NS = 'dshHelloAdmin'
+    const injected = globalThis.__DSH_HELLO__
     const BASE = typeof injected?.basePath === 'string' && injected.basePath.length > 0
       ? injected.basePath.replace(/\/$/, '')
       : '/dsh-hello'
@@ -130,7 +130,6 @@ window.__ModuleLoader__.load({
       cancel: '取消',
       qrTitle: '扫码/输入',
       qrFailed: '二维码生成失败',
-      qrLoading: '二维码加载中…',
       qrHint: '请用手机打开 DSH Hello，连接 → 添加服务器 → 使用插件配对 → 扫描二维码。',
       devices: '已配对设备',
       device: '设备',
@@ -178,7 +177,6 @@ window.__ModuleLoader__.load({
       cancel: 'Cancel',
       qrTitle: 'Scan or type',
       qrFailed: 'Could not build the QR code',
-      qrLoading: 'Loading QR…',
       qrHint: 'Open DSH Hello on your phone, then Connection → Add server → Plugin pairing → Scan QR code.',
       devices: 'Paired devices',
       device: 'Device',
@@ -226,7 +224,6 @@ window.__ModuleLoader__.load({
       cancel: 'キャンセル',
       qrTitle: 'スキャン / 入力',
       qrFailed: 'QR コードを生成できませんでした',
-      qrLoading: 'QR を読み込み中…',
       qrHint: 'スマートフォンで DSH Hello を開き、接続 → サーバーを追加 → プラグインでペアリング → QR コードをスキャンします。',
       devices: 'ペアリング済みデバイス',
       device: 'デバイス',
@@ -274,7 +271,6 @@ window.__ModuleLoader__.load({
       cancel: 'Cancelar',
       qrTitle: 'Escanear o escribir',
       qrFailed: 'No se pudo generar el código QR',
-      qrLoading: 'Cargando QR…',
       qrHint: 'Abre DSH Hello en tu teléfono y ve a Conexión → Añadir servidor → Emparejamiento por plugin → Escanear el código QR.',
       devices: 'Dispositivos emparejados',
       device: 'Dispositivo',
@@ -322,7 +318,6 @@ window.__ModuleLoader__.load({
       cancel: 'Annuler',
       qrTitle: 'Scanner ou saisir',
       qrFailed: 'Impossible de générer le QR code',
-      qrLoading: 'Chargement du QR…',
       qrHint: 'Ouvrez DSH Hello sur votre téléphone, puis Connexion → Ajouter un serveur → Appairage par plugin → Scanner le QR code.',
       devices: 'Appareils appairés',
       device: 'Appareil',
@@ -370,7 +365,6 @@ window.__ModuleLoader__.load({
       cancel: 'Abbrechen',
       qrTitle: 'Scannen oder eingeben',
       qrFailed: 'QR-Code konnte nicht erzeugt werden',
-      qrLoading: 'QR wird geladen…',
       qrHint: 'DSH Hello am Telefon öffnen, dann Verbindung → Server hinzufügen → Plugin-Kopplung → QR-Code scannen.',
       devices: 'Gekoppelte Geräte',
       device: 'Gerät',
@@ -418,7 +412,6 @@ window.__ModuleLoader__.load({
       cancel: 'Отмена',
       qrTitle: 'Сканировать или ввести',
       qrFailed: 'Не удалось создать QR-код',
-      qrLoading: 'Загрузка QR…',
       qrHint: 'Откройте DSH Hello на телефоне: Подключение → Добавить сервер → Сопряжение плагина → Сканировать QR-код.',
       devices: 'Сопряжённые устройства',
       device: 'Устройство',
@@ -466,7 +459,6 @@ window.__ModuleLoader__.load({
       cancel: 'Cancelar',
       qrTitle: 'Escanear ou digitar',
       qrFailed: 'Não foi possível gerar o QR code',
-      qrLoading: 'Carregando QR…',
       qrHint: 'Abra o DSH Hello no celular, depois Conexão → Adicionar servidor → Emparelhamento por plugin → Escanear o QR code.',
       devices: 'Dispositivos emparelhados',
       device: 'Dispositivo',

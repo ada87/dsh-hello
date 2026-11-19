@@ -314,10 +314,6 @@ export function header(req: HostRequest, name: string): string | undefined {
   return value
 }
 
-export function bearerDevice(): void {
-  // Marker for documentation; authentication lives on HttpRouter.
-}
-
 export function isLoopbackAddress(address: string): boolean {
   const normalized = address.replace(/^::ffff:/, '')
   return normalized === '127.0.0.1' || normalized === '::1' || normalized === 'localhost' || normalized.startsWith('127.')

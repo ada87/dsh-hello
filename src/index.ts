@@ -8,7 +8,7 @@ import { InteractionBroker } from './interactions.js'
 import { PairingManager } from './pairing.js'
 import { PushManager } from './push.js'
 import { registerRoutes } from './routes.js'
-import { createSessionFacade, readProjections } from './sessions.js'
+import { createSessionFacade } from './sessions.js'
 import { SseHub } from './streams.js'
 import { TerminalManager } from './terminal.js'
 import { checkDshVersion } from './version.js'
@@ -47,7 +47,7 @@ export async function apply(ctx: HostContext, rawConfig?: Partial<PluginConfig>)
   // the prototype. The injected services are already properties on `ctx`.
   const host: HostContext = ctx
 
-  const devices = new DeviceStore(host, credentials)
+  const devices = new DeviceStore(credentials)
   await devices.load()
 
   const hub = new SseHub()
@@ -151,7 +151,7 @@ export async function apply(ctx: HostContext, rawConfig?: Partial<PluginConfig>)
   ctx.effect(() => {
     const off = ctx.on('webserver/index-inject', (table) => {
       const rows = table as Array<{ kind: 'global'; name: string; value: unknown }>
-      rows.push({ kind: 'global', name: '__DSH_DOOR__', value: { basePath: config.basePath } })
+      rows.push({ kind: 'global', name: '__DSH_HELLO__', value: { basePath: config.basePath } })
     }, { global: true })
     return () => off()
   }, 'dsh-hello: index injection')
@@ -278,4 +278,3 @@ async function printPairingQr(code: string, ctx: HostContext, config: PluginConf
   })
 }
 
-export { readProjections }

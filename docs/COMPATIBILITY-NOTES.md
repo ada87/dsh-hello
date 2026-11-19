@@ -53,7 +53,7 @@ rg "@since|@deprecated" apps/dsh-hello/src apps/app-dsh-hello/src
 
 记录文件：`compat/versions.json`。
 
-当前包版本为 **0.1.6**（已读水位由 dsh-tag 持有，dsh-hello 只做鉴权转发）；0.1.5 已发布，0.1.6 待发布。页面里的版本号只作记录，功能以 `features` 探测为准，不看版本号。
+当前包版本见 `package.json`。页面里的版本号只作记录，功能以 `features` 探测为准，不看版本号。
 
 静态对照页（类似 electron-release 的简版）：
 
@@ -71,22 +71,16 @@ npm run compat:site
 - `pending`：尚未测试
 - `fail`：存在已知不兼容
 
-## 4. 0.2.1 兼容代码位置
+## 4. 0.2.1 支持已移除
 
-以下代码是 0.2.1 专用兼容分支，已标记 `@deprecated 0.2.2`：
+0.1.5 起 **0.2.1 不再支持**，原先的兼容分支已全部删除：
 
-| 位置 | 作用 |
+| 已删除 | 说明 |
 |---|---|
-| `src/host.ts` `SessionEventsPage.cursor` | 0.2.1 没有分页 cursor |
-| `src/host.ts` `SessionControllerService.state` | 0.2.1 没有 state() |
-| `src/sessions.ts` transcript cursor fallback | 用 projection watermark 代替 cursor |
-| `src/sessions.ts` state synthesis | 从 projections + list 合成 running/queue |
-| `src/config.ts` `dshVersionRange` 默认值 | 仍写着 0.2.1 下限 |
+| `SessionEventsPage.cursor` 可选回退 | 改为必需，直接使用 Host 返回的 cursor |
+| `SessionControllerService.state()` 可选回退 | 改为必需，不再从 projections + list 合成 |
+| `SessionControllerService.fork()` 能力探测 | 改为必需 |
+| `dshVersionRange` 的 0.2.1 下限 | 默认值与 `engines.dsh` 均为 `>=0.2.2-0 <0.3.0` |
 | `tests/compat.test.ts` | 0.2.1 兼容测试套件 |
-| `apps/app-dsh-hello/src/api/tokenClient.ts` | token 模式的分页兼容注释/逻辑 |
 
-过渡建议：
-
-1. 先保留 0.2.1 兼容代码，但标记 `@deprecated 0.2.2`，并在 `/health` 里把 0.2.1 标为 `dshTested: false`。
-2. 下一个 minor（0.2.3）发布时删除这些分支，把 `engines.dsh` / `dshVersionRange` 下限提到 `0.2.2-0`。
-3. 如果确认 VPS 已升级到 0.2.2+，可以提前删除。
+App 端的 token 模式不再需要分页兼容分支；0.2.2 之前的 Host 会在 `/health` 上报 `dshCompatible: false`。

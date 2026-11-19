@@ -136,12 +136,7 @@ export function createSessionFacade(ctx: HostContext): SessionFacade {
         title: typeof projections.title === 'string' ? projections.title : null,
         records: page.records,
         hasMore: page.hasMore,
-        /**
-         * @deprecated 0.2.2 — 0.2.1 fallback only; drop with the 0.2.1 floor.
-         * 0.2.1 omits the inclusive cursor; the projection watermark is the
-         * same cut the page was read at.
-         */
-        cursor: page.cursor ?? options.beforeSeq ?? cut ?? 0,
+        cursor: page.cursor,
         projections,
       }
     },
@@ -153,21 +148,7 @@ export function createSessionFacade(ctx: HostContext): SessionFacade {
       ])
       const projections = snapshot.values
       const summary = list.items.find(item => item.sessionId === sessionId)
-      const nativeState = typeof controller.state === 'function'
-        ? await controller.state({ sessionId }, signal)
-        : undefined
-      /**
-       * @deprecated 0.2.2 — 0.2.1 fallback only; drop with the 0.2.1 floor.
-       * 0.2.1 has no state() endpoint. Synthesize the fields the mobile UI
-       * needs from projections + list; queue details are unavailable there.
-       */
-      const state = nativeState ?? {
-        cursor: snapshot.asOfSeq ?? 0,
-        active: summary?.agentAvailable === true,
-        running: summary?.running === true,
-        queue: null,
-        pendingInput: [] as readonly string[],
-      }
+      const state = await controller.state({ sessionId }, signal)
       return {
         state: {
           cursor: state.cursor,
@@ -214,9 +195,6 @@ export function createSessionFacade(ctx: HostContext): SessionFacade {
     },
 
     fork(sessionId, atSeq) {
-      if (typeof controller.fork !== 'function') {
-        throw new Error('this dsh version does not expose session/fork')
-      }
       return controller.fork({
         sessionId: sessionId as never,
         ...(atSeq === undefined ? {} : { atSeq }),

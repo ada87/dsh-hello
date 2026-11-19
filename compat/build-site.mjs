@@ -29,7 +29,7 @@ const rows = (data.releases ?? []).map((release) => `
     <tr>
       <td><code>${escape(release.dsh)}</code></td>
       <td>${escape(release.dshMinor)}</td>
-      <td>${escape(release.door)}</td>
+      <td>${escape(release.hello)}</td>
       <td>${escape(release.app)}</td>
       <td>${escape(release.protocol)}</td>
       <td><span class="badge ${resultClass[release.result] ?? 'pending'}">${escape(resultLabel[release.result] ?? release.result)}</span></td>

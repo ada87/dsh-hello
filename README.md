@@ -41,7 +41,7 @@ dsh plugin --profile web add ./dsh-hello-<version>.tgz
 Restart `dsh web`. The terminal prints:
 
 ```text
-[dsh-hello] dsh 0.2.2-rc.3 satisfies >=0.2.1-rc.4 <0.3.0
+[dsh-hello] dsh 0.2.2-rc.3 satisfies >=0.2.2-0 <0.3.0
 [dsh-hello] routes mounted at /dsh-hello (protocol 1, push none)
 [dsh-hello] pairing code 1234 — open the app, enter the server URL, then this code.
 ```
@@ -51,11 +51,13 @@ the terminal prints the next one.
 
 ### Pairing and compatibility
 
-The generated pairing code is **four digits** (`1234`). It is one-time, expires
-after `pairingTtlMs`, and each client address gets `pairingMaxAttempts` (8)
-tries per TTL. Four digits are convenient but low entropy: keep dsh on a trusted
-LAN/Tailscale, or raise `pairingCodeLength` / lower `pairingMaxAttempts` before
-exposing it to the internet.
+The pairing code is **four digits** by default (`1234`). The Settings page offers
+three modes: **One-time** (fresh code, `pairingTtlMs` TTL), **Permanent** (does
+not expire until changed) and **Locked** (no new devices; paired ones keep
+working). Each client address gets `pairingMaxAttempts` (8) tries per TTL. Four
+digits are convenient but low entropy: keep dsh on a trusted LAN/Tailscale, or
+raise `pairingCodeLength` / lower `pairingMaxAttempts` before exposing it to the
+internet.
 
 The Host's compatibility gate enforces the `engines.dsh` range at install and
 profile startup. If a linked or exempted install runs outside the tested range,
@@ -67,12 +69,10 @@ Prerelease suffixes (`alpha`, `rc`) do not create a new line; `0.2.2-rc.1` and
 `0.2.2-rc.3` are one line. The current matrix and test record live in
 [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) and `compat/versions.json`.
 
-`engines.dsh` still reads `>=0.2.1-rc.4 <0.3.0` during the transition. 0.2.1 is
-outside the support window and marked `@deprecated 0.2.2`: it lacks
-`sessionController.state()` and the page cursor, so the facade synthesizes state
-from projections + list and always supplies the projection watermark as the cut,
-then fills the missing cursor with that cut. See `tests/compat.test.ts`. The
-floor will move to `>=0.2.2-0` when the 0.2.1 shims are removed.
+`engines.dsh` reads `>=0.2.2-0 <0.3.0`. 0.2.1 is outside the support window: it
+lacks `sessionController.state()` and the page cursor, so the plugin no longer
+carries shims for it. A Host outside the range still loads with a warning and
+reports `dshCompatible: false` in `/health`.
 
 ## Usage
 
@@ -98,8 +98,8 @@ available** and a **Versions** section; **Update** removes the old version,
 installs the selected one, keeps the bundle enabled, and recomposes with HMR or
 asks for a restart. A failed update restores the previous version when possible.
 
-The **Update / Versions** section is a dsh 0.2.2 feature. On 0.2.1 (outside the
-supported window) the page has no update action, so update from the CLI instead:
+The **Update / Versions** section is a dsh 0.2.2 feature. When the page has no
+update action, update from the CLI instead:
 
 ```sh
 dsh plugin --profile web remove dsh-hello
@@ -256,7 +256,7 @@ the app probes `/dsh-hello/health`, and pairings live under `dsh-hello/*`.
     maxBodyBytes: 65536
     rateLimitWindowMs: 60000
     rateLimitMax: 240
-    dshVersionRange: '>=0.2.1-rc.4 <0.3.0'
+    dshVersionRange: '>=0.2.2-0 <0.3.0'
     push:
       provider: none                    # none | fcm | apns | relay
       # provider: relay

@@ -567,10 +567,11 @@ test('extension origins pair and call device routes with CORS', async () => {
 test('the admin QR follows the browser base', async () => {
   const browserBase = 'http://203.0.113.10:3080/'
   const admin = await fetch(`${state.base}/admin/data?base=${encodeURIComponent(browserBase)}`)
-  const adminBody = await admin.json() as { origin: string; qr: string; basePath: string }
+  const adminBody = await admin.json() as { origin: string; qrSvg: string | null; qrError: string | null; basePath: string }
   assert.equal(adminBody.origin, 'http://203.0.113.10:3080')
   assert.equal(adminBody.basePath, '/dsh-hello')
-  assert.ok(adminBody.qr.length > 0)
+  assert.match(adminBody.qrSvg ?? '', /^<svg/)
+  assert.equal(adminBody.qrError, null)
 })
 
 test('a live browser wins: the approval listener delegates with next()', async () => {

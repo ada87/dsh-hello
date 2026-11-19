@@ -94,12 +94,8 @@ export interface SessionEventEntry {
 export interface SessionEventsPage {
   records: SessionEventEntry[]
   hasMore: boolean
-  /**
-   * @since 0.2.2
-   * Inclusive event cursor at the page cut. 0.2.1 omitted it, so the facade
-   * falls back to the projection watermark (see `sessions.transcript`).
-   */
-  cursor?: number
+  /** Inclusive event cursor at the page cut. */
+  cursor: number
 }
 
 export interface SessionStateValue {
@@ -160,7 +156,7 @@ export interface SessionControllerService {
   create(request: { cwd?: string; workspaceId?: string; agentPreset?: string; sessionId?: string }): Promise<{ sessionId: string }>
   rename(request: { sessionId: string; title: string }): Promise<{ title: string; seq: number }>
   /** Present in current dsh; older 0.2.1 profiles may not expose it. */
-  fork?(request: { sessionId: string; atSeq?: number }): Promise<{ sessionId: string }>
+  fork(request: { sessionId: string; atSeq?: number }): Promise<{ sessionId: string }>
   page(request: {
     address: SessionAddress
     beforeSeq?: number
@@ -170,10 +166,9 @@ export interface SessionControllerService {
   }, signal: AbortSignal): Promise<SessionEventsPage>
   /**
    * @since 0.2.2
-   * Native running/queue state endpoint. 0.2.1 lacked it; the facade
-   * synthesizes the fields from projections and the list row.
+   * Native running/queue state endpoint.
    */
-  state?(request: { sessionId: string }, signal: AbortSignal): Promise<SessionStateValue>
+  state(request: { sessionId: string }, signal: AbortSignal): Promise<SessionStateValue>
   projections(request: { sessionId: string }, signal: AbortSignal): Promise<SessionProjectionsValue | null>
   follow(request: {
     address: SessionAddress

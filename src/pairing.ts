@@ -60,10 +60,6 @@ export class PairingManager {
     }
   }
 
-  isFixed(): boolean {
-    return this.fixedCode !== null
-  }
-
   isLocked(): boolean {
     return this.locked
   }
