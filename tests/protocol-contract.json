@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "note": "Handshake fields shared by dsh-hello/src/protocol.ts and app-dsh/src/api/dshHelloProtocol.ts. Both repos pin this list; changing it is a deliberate contract edit.",
+  "interfaces": {
+    "ServerFacts": [
+      "dshCompatible",
+      "dshVersion",
+      "host",
+      "name",
+      "origin",
+      "port",
+      "protocol",
+      "protocolName",
+      "version"
+    ],
+    "HealthResponse": [
+      "deviceCount",
+      "features",
+      "ok",
+      "pairingFixed",
+      "pairingOpen",
+      "time"
+    ],
+    "HealthResponse.features": [
+      "agentPresets",
+      "approvals",
+      "archive",
+      "debugRoutes",
+      "files",
+      "interactionTarget",
+      "models",
+      "pin",
+      "presence",
+      "protocol",
+      "push",
+      "questions",
+      "readState",
+      "scheduleActions",
+      "scheduleHistory",
+      "schedules",
+      "sessionEvents",
+      "terminal",
+      "uploads",
+      "workspaceRename",
+      "workspaces"
+    ]
+  }
+}

@@ -1,6 +1,8 @@
 /**
  * Wire protocol shared with the React Native app. The plugin owns this shape;
- * the app mirrors it in `src/api/protocol.ts`. Keep both files in sync.
+ * the app mirrors it in `src/api/dshHelloProtocol.ts`. Both repositories pin
+ * the handshake fields in `tests/protocol-contract.json`; bump
+ * `PROTOCOL_VERSION` on a breaking wire change.
  */
 
 /** Protocol version; bump on a breaking wire change. */
