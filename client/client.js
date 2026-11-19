@@ -113,8 +113,6 @@ window.__ModuleLoader__.load({
       passwordInvalid: '请输入 4 位数字',
       confirm: '确定',
       cancel: '取消',
-      resetTitle: '恢复为一次性配对码？',
-      resetDesc: '当前永久码会立即失效，并生成新的一次性码。',
       qrTitle: '扫码/输入',
       qrLoading: '二维码加载中…',
       qrHint: '请用手机打开 DSH Hello，连接 → 添加服务器 → 使用插件配对 → 扫描二维码。',
@@ -161,8 +159,6 @@ window.__ModuleLoader__.load({
       passwordInvalid: 'Enter four digits',
       confirm: 'Confirm',
       cancel: 'Cancel',
-      resetTitle: 'Restore one-time pairing?',
-      resetDesc: 'The permanent code stops working immediately and a fresh one-time code is generated.',
       qrTitle: 'Scan or type',
       qrLoading: 'Loading QR…',
       qrHint: 'Open DSH Hello on your phone, then Connection → Add server → Plugin pairing → Scan QR code.',
@@ -340,10 +336,6 @@ window.__ModuleLoader__.load({
             setDialogError(null)
             setDialog('permanent')
           }
-          const openReset = () => {
-            setDialogError(null)
-            setDialog('reset')
-          }
           /**
            * One three-way switch: Lock, One-time, Permanent. Unlocking restores
            * whichever code mode was in force, so switching from Lock to another
@@ -356,7 +348,9 @@ window.__ModuleLoader__.load({
               return
             }
             if (locked) await setLocked(false)
-            if (next === 'one-time' && fixed) openReset()
+            // Picking One-time drops the permanent code on the spot: the switch
+            // states the intent, so it must not ask a second time.
+            if (next === 'one-time' && fixed) { await perform({ action: 'auto' }); return }
             if (next === 'permanent' && !fixed) openPermanent()
           }
           const confirmPermanent = async () => {
@@ -372,14 +366,6 @@ window.__ModuleLoader__.load({
             }
             setDialog(null)
             setPassword('')
-          }
-          const confirmReset = async () => {
-            const failure = await perform({ action: 'auto' })
-            if (failure !== null) {
-              setDialogError(failure)
-              return
-            }
-            setDialog(null)
           }
 
           const revokeDevice = async (device) => {
@@ -485,7 +471,7 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'dd-control' },
                     fixed
                       ? h(Button, {
-                        variant: 'outline',
+                        variant: 'primary',
                         size: 'sm',
                         disabled: busy,
                         onClick: openPermanent,
@@ -580,23 +566,17 @@ window.__ModuleLoader__.load({
             },
             h('div', { className: 'dd-modal', role: 'dialog', 'aria-modal': 'true' },
               h('h3', { className: 'dd-modalTitle' },
-                dialog === 'permanent'
-                  ? (fixed ? t('modifyTitle') : t('setPermanentTitle'))
-                  : t('resetTitle')),
+                fixed ? t('modifyTitle') : t('setPermanentTitle')),
               h('p', { className: 'dd-desc' },
-                dialog === 'permanent'
-                  ? (fixed ? t('modifyDesc') : t('setPermanentDesc'))
-                  : t('resetDesc')),
-              dialog === 'permanent'
-                ? h(Input, {
-                  className: 'dd-modalInput',
-                  value: password,
-                  placeholder: t('passwordPlaceholder'),
-                  autoFocus: true,
-                  autoComplete: 'off',
-                  onChange: event => setPassword(event.target.value.replace(/\D/g, '').slice(0, 4)),
-                })
-                : null,
+                fixed ? t('modifyDesc') : t('setPermanentDesc')),
+              h(Input, {
+                className: 'dd-modalInput',
+                value: password,
+                placeholder: t('passwordPlaceholder'),
+                autoFocus: true,
+                autoComplete: 'off',
+                onChange: event => setPassword(event.target.value.replace(/\D/g, '').slice(0, 4)),
+              }),
               dialogError === null ? null : h('p', { className: 'dd-error' }, dialogError),
               h('div', { className: 'dd-modalActions' },
                 h(Button, {
@@ -609,7 +589,7 @@ window.__ModuleLoader__.load({
                   variant: 'primary',
                   size: 'sm',
                   disabled: busy,
-                  onClick: () => { void (dialog === 'permanent' ? confirmPermanent() : confirmReset()) },
+                  onClick: () => { void confirmPermanent() },
                 }, t('confirm')),
               ),
             )),
