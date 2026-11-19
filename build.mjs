@@ -19,9 +19,6 @@ await build({
     '@deepseek-ai/cordis',
     '@deepseek-ai/dsh-app-boot',
     '@deepseek-ai/dsh-*',
-    // qrcode's Node entry requires `fs` dynamically; keep it a runtime
-    // dependency instead of letting esbuild wrap it as ESM.
-    'qrcode',
   ],
   banner: {
     js: '// dsh-hello - bundled by esbuild; dsh services stay external.',
