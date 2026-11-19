@@ -26,7 +26,7 @@ test('speech transcription delegates WAV bytes to the selected Host provider', a
   const catalog = speechCatalog(ctx)
   assert.equal(catalog.available, true)
   assert.equal(catalog.providers?.length, 1)
-  const result = await transcribeSpeech(ctx, { audioBase64: 'UklGRg==' }, new AbortController().signal)
+  const result = await transcribeSpeech(ctx, { audio: Buffer.from('RIFF') }, new AbortController().signal)
   assert.equal(result.text, '你好')
   assert.equal(received, 'UklGRg==')
 })

@@ -36,15 +36,15 @@ export function speechCatalog(ctx: HostContext): { available: boolean; providers
 /** Transcribe only; this never submits a Session prompt or activates an Agent. */
 export async function transcribeSpeech(
   ctx: HostContext,
-  input: { audioBase64: string; providerId?: string; language?: string },
+  input: { audio: Buffer; providerId?: string; language?: string },
   signal: AbortSignal,
 ): Promise<{ text: string; audioSeconds: number; inferenceSeconds: number }> {
   const controller = getSpeechController(ctx)
   if (controller === undefined) throw new HttpError(503, 'speech-unavailable', 'this dsh profile has no speech transcription service')
-  if (input.audioBase64.length === 0) throw new HttpError(400, 'empty-audio', 'audioBase64 is required')
+  if (input.audio.byteLength === 0) throw new HttpError(400, 'empty-audio', 'the request body must carry WAV bytes')
   try {
     return await controller.transcribe({
-      audioBase64: input.audioBase64,
+      audioBase64: input.audio.toString('base64'),
       ...(input.providerId === undefined ? {} : { providerId: input.providerId }),
       ...(input.language === undefined ? {} : { language: input.language }),
     }, signal)

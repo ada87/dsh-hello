@@ -237,17 +237,20 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
     method: 'POST',
     pattern: '/speech/transcribe',
     auth: 'device',
-    // 4 MiB WAV becomes roughly 5.33 MiB of canonical base64 plus JSON.
-    maxBodyBytes: 6 * 1024 * 1024,
+    rawBody: true,
+    // Raw 16 kHz mono WAV above dsh's own audio budget; no base64 inflation.
+    maxBodyBytes: 5 * 1024 * 1024,
     handler: async (rc) => {
-      const body = rc.body as { audioBase64?: unknown; providerId?: unknown; language?: unknown } | undefined
-      if (body === undefined || typeof body.audioBase64 !== 'string') {
-        throw new HttpError(400, 'empty-audio', 'audioBase64 is required')
+      const audio = rc.body
+      if (!Buffer.isBuffer(audio) || audio.byteLength === 0) {
+        throw new HttpError(400, 'empty-audio', 'the request body must carry WAV bytes')
       }
+      const providerId = rc.query.get('providerId') ?? undefined
+      const language = rc.query.get('language') ?? undefined
       const result = await transcribeSpeech(deps.ctx, {
-        audioBase64: body.audioBase64,
-        ...(typeof body.providerId === 'string' && body.providerId.length > 0 ? { providerId: body.providerId } : {}),
-        ...(typeof body.language === 'string' && body.language.length > 0 ? { language: body.language } : {}),
+        audio,
+        ...(providerId === undefined || providerId.length === 0 ? {} : { providerId }),
+        ...(language === undefined || language.length === 0 ? {} : { language }),
       }, rc.signal)
       sendJson(rc.res, 200, result)
     },

@@ -329,7 +329,7 @@ caller), because the settings page talks to it.
 | DELETE | `/devices/me/push` | Remove this device's push registration |
 | POST | `/presence` | Foreground claim (`{ foreground: boolean }`) |
 | GET | `/speech` | Host speech provider readiness |
-| POST | `/speech/transcribe` | Transcribe one canonical base64 WAV |
+| POST | `/speech/transcribe` | Transcribe a raw WAV body (`audio/wav`; optional `?language=&providerId=`) |
 | GET | `/sessions` | Session list with title projections and optional `vitals` |
 | POST | `/sessions` | Create/reuse a blank Session |
 | PATCH | `/sessions/:id` | Rename (`{ "title": string }`) |
