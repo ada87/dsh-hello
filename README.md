@@ -248,7 +248,7 @@ the app probes `/dsh-hello/health`, and pairings live under `dsh-hello/*`.
     pairingTtlMs: 300000
     pairingCodeLength: 4
     pairingMaxAttempts: 8
-    interactionTarget: browser-first     # phone-first | browser-first | browser-only
+    interactionTarget: browser-only      # browser-only | browser-first | phone-first (Default | DSH first | Device first)
     approvalWaitTimeoutMs: 120000
     questionWaitTimeoutMs: 120000
     allowSessionWideGrants: true
@@ -378,13 +378,14 @@ watermarks are shared across paired devices.
 ### Approval policy
 
 dsh hands an approval or a question to **one** answerer: the first listener that
-does not call `next()`. `interactionTarget` decides who that is.
+does not call `next()`. `interactionTarget` decides who that is; the admin page
+calls the same three choices Default, DSH first and Device first.
 
-| Value | Who answers |
-|---|---|
-| `browser-first` (default) | A live browser always answers. With no browser connected the app holds the request, even in the background. |
-| `phone-first` | A foreground app answers, even when a browser is connected; otherwise dsh's own listeners do. |
-| `browser-only` | Nobody here: the plugin registers no listener, so dsh behaves exactly as if it were not installed. The app shows a read-only prompt and hands the decision to the Web UI. |
+| Admin label | Value | Who answers |
+|---|---|---|
+| Default (default) | `browser-only` | Nobody here: the plugin registers no listener, so dsh behaves exactly as if it were not installed. The app shows a read-only prompt and hands the decision to the Web UI. |
+| DSH first | `browser-first` | A live web UI always answers. With no browser connected the app holds the request, even in the background. |
+| Device first | `phone-first` | A foreground app answers, even when a browser is connected; otherwise dsh's own listeners do. |
 
 The plugin registers unscoped (`global`) waterfall listeners ahead of the
 browser's answerer, so the policy rather than listener order decides. dsh 0.2.2

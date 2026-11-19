@@ -71,13 +71,15 @@ export interface Config {
    *
    * dsh dispatches both through one agent-scoped waterfall, so exactly one
    * answerer sees a request: whoever holds it first. This switch decides who
-   * that is.
-   * - `phone-first`: the app holds requests while it is in the foreground;
-   *   anything else falls through to dsh's own listeners (the browser).
-   * - `browser-first`: a live browser client always answers; the app holds
-   *   only when no browser is connected (for example, phone-only on the go).
-   * - `browser-only`: this plugin never answers - dsh behaves as if it were
-   *   not installed - and the app only shows a prompt that opens the Web UI.
+   * that is. The admin page offers the same three choices as Default, DSH
+   * first and Device first.
+   * - `browser-only` (Default): this plugin never answers - dsh behaves as if
+   *   it were not installed - and the app only shows a prompt that opens the
+   *   Web UI.
+   * - `browser-first` (DSH first): a live web UI always answers; the app holds
+   *   only when no browser is connected (phone-only, on the go).
+   * - `phone-first` (Device first): the app holds requests while it is in the
+   *   foreground; anything else falls through to dsh's own listeners.
    */
   interactionTarget: InteractionTarget
   /** How long an approval request is held for the app before delegation. */
@@ -118,7 +120,7 @@ export const Config: Schema<Config> = Schema.object({
   pairingMaxAttempts: Schema.number().default(8),
   pairingCode: Schema.string(),
   logPairingCode: Schema.boolean().default(true),
-  interactionTarget: Schema.union(['phone-first', 'browser-first', 'browser-only'] as const).default('browser-first'),
+  interactionTarget: Schema.union(['phone-first', 'browser-first', 'browser-only'] as const).default('browser-only'),
   approvalWaitTimeoutMs: Schema.number().default(2 * 60 * 1000),
   questionWaitTimeoutMs: Schema.number().default(2 * 60 * 1000),
   allowSessionWideGrants: Schema.boolean().default(true),
@@ -161,7 +163,7 @@ export function normalizeConfig(input: Partial<Config> | undefined): Config {
     pairingCodeLength: raw.pairingCodeLength ?? 4,
     pairingMaxAttempts: raw.pairingMaxAttempts ?? 8,
     logPairingCode: raw.logPairingCode ?? true,
-    interactionTarget: raw.interactionTarget ?? 'browser-first',
+    interactionTarget: raw.interactionTarget ?? 'browser-only',
     approvalWaitTimeoutMs: raw.approvalWaitTimeoutMs ?? 2 * 60 * 1000,
     questionWaitTimeoutMs: raw.questionWaitTimeoutMs ?? 2 * 60 * 1000,
     allowSessionWideGrants: raw.allowSessionWideGrants ?? true,
