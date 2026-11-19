@@ -187,6 +187,24 @@ export interface SessionControllerService {
   cancel(request: { sessionId: string }): { accepted: true }
   updateQueue(request: { sessionId: string; itemId: string; action: unknown }): Promise<{ accepted: true }>
   resolveAgent(sessionId: string): Promise<ResolveAgentResult>
+  /**
+   * Read one durable image (user attachment) by reference. Absent on hosts
+   * older than 0.2.2, so callers must feature-detect.
+   */
+  attachment?(request: {
+    sessionId: string
+    attachment: ImageAttachmentRef
+  }): Promise<{ attachment: ImageAttachmentRef; data: string }>
+}
+
+/** Durable, serializable reference to one immutable image attachment. */
+export interface ImageAttachmentRef {
+  attachmentId: string
+  mediaType: string
+  bytes: number
+  width: number
+  height: number
+  name?: string
 }
 
 export interface CredentialKey {

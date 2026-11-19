@@ -320,6 +320,54 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
     },
   })
 
+  // User-sent images live in dsh's attachment store, not in the workspace, so
+  // they need the durable reference from the message part rather than a path.
+  router.add({
+    method: 'GET',
+    pattern: '/sessions/:id/attachment',
+    auth: 'device',
+    handler: async (rc) => {
+      const attachmentId = rc.query.get('attachmentId')
+      const mediaType = rc.query.get('mediaType')
+      const bytes = numberParam(rc.query.get('bytes'))
+      const width = numberParam(rc.query.get('width'))
+      const height = numberParam(rc.query.get('height'))
+      if (attachmentId === null || attachmentId.length === 0 || mediaType === null) {
+        throw new HttpError(400, 'bad-attachment', 'attachmentId and mediaType are required')
+      }
+      if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(mediaType)) {
+        throw new HttpError(400, 'bad-media-type', 'unsupported image media type')
+      }
+      if (bytes === undefined || width === undefined || height === undefined) {
+        throw new HttpError(400, 'bad-attachment', 'bytes, width and height are required to verify the attachment')
+      }
+      if (bytes > 24 * 1024 * 1024) throw new HttpError(413, 'attachment-too-large', 'the image is larger than 24 MiB')
+      const controller = deps.ctx.sessionController
+      if (controller.attachment === undefined) {
+        throw new HttpError(501, 'attachment-unsupported', 'this Host cannot read image attachments')
+      }
+      const name = rc.query.get('name') ?? undefined
+      const value = await controller.attachment({
+        sessionId: rc.params.id!,
+        attachment: {
+          attachmentId,
+          mediaType,
+          bytes,
+          width,
+          height,
+          ...(name !== undefined && name.length > 0 ? { name } : {}),
+        },
+      })
+      const data = Buffer.from(value.data, 'base64')
+      rc.res.statusCode = 200
+      rc.res.setHeader('Content-Type', value.attachment.mediaType)
+      rc.res.setHeader('Content-Length', String(data.byteLength))
+      rc.res.setHeader('Cache-Control', 'private, max-age=86400, immutable')
+      rc.res.setHeader('X-Content-Type-Options', 'nosniff')
+      rc.res.end(data)
+    },
+  })
+
   router.add({
     method: 'GET',
     pattern: '/workspaces/:id/image',
