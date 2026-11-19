@@ -42,7 +42,7 @@ Restart `dsh web`. The terminal prints:
 
 ```text
 [dsh-hello] dsh 0.2.2-rc.3 satisfies >=0.2.2-0 <0.3.0
-[dsh-hello] routes mounted at /dsh-hello (protocol 1, push none)
+[dsh-hello] routes mounted at /dsh-hello (protocol 2, push none)
 [dsh-hello] pairing code 1234 — open the app, enter the server URL, then this code.
 ```
 
@@ -269,9 +269,9 @@ the app probes `/dsh-hello/health`, and pairings live under `dsh-hello/*`.
 
 `relay` mode sends only the notification payload and host token to your relay;
 the relay holds the FCM/APNs credentials. Device tokens are registered with the
-relay automatically when the app calls `POST /push/register`.
+relay automatically when the app calls `PUT /devices/me/push`.
 
-The `notify*` config values are host-wide defaults. Each device can then set its own `approval`, `question` and `turnEnd` subscriptions with `PUT /push/subscriptions`; both direct sending and relay mode filter unsubscribed devices. Turn-end pushes are sent only when no app has a live global SSE connection. A connected app handles the event locally instead.
+The `notify*` config values are host-wide defaults. Each device can then set its own `approval`, `question` and `turnEnd` subscriptions with `PUT /devices/me/push/subscriptions`; both direct sending and relay mode filter unsubscribed devices. Turn-end pushes are sent only when no app has a live global SSE connection. A connected app handles the event locally instead.
 
 Push credentials are BYO. Put secrets in the dsh credential store under the
 owner-scoped record `dsh-hello/push` when possible; the plugin reads that record
@@ -314,59 +314,77 @@ The plugin talks directly to Google/Apple; there is no author-operated relay.
 
 All routes are under `basePath` (default `/dsh-hello`). Except for `/health`
 and `/pair`, every route requires `Authorization: Bearer <device token>`.
+`/admin/*` instead accepts the Host's own browser session (or a loopback
+caller), because the settings page talks to it.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/health` | Public capability and version facts |
-| GET | `/pair` | Public pairing availability (no code) |
-| GET/POST | `/pair/code` | Loopback-only current/rotated code + QR |
-| POST | `/pair` | One-time code → device token |
-| GET | `/devices` | Paired devices |
-| DELETE | `/devices/:id` | Revoke a device |
-| POST | `/push/register` | Register an FCM/APNs token |
-| PUT | `/push/subscriptions` | Set this device's `approval` / `question` / `turnEnd` subscriptions |
-| DELETE | `/push` | Remove this device's push token |
-| POST | `/presence` | Tell the plugin this device is foreground (`{ foreground: boolean }`) |
-| GET | `/speech` | Host speech Provider readiness; requires the experimental speech API bundle |
-| POST | `/speech/transcribe` | Transcribe one canonical base64 WAV without submitting a Session prompt |
-| GET | `/schedules` | Automation catalog; `available: false` when the profile has no schedule service |
-| GET | `/schedule-marks` | Active scheduled-task counts per Session, for the drawer clock mark |
-| GET | `/schedules/:id` | One task with target, last delivery and execution flags |
-| GET | `/schedules/:id/history?limit=20&before=` | Delivery history, newest first |
-| POST | `/schedules/:id/run` | Deliver one occurrence now without moving the schedule |
-| PUT | `/schedules/:id` | Pause/resume (`{ "active": boolean, "expectedUpdatedAt"?: string }`) |
-| DELETE | `/schedules/:id` | Delete the task and its saved deliveries |
-| GET | `/sessions` | Session list with title projections and optional `vitals` (context %, tokens, turns, todos, goal, plan, model) |
+| GET | `/health` | Public capability and version facts (also reports `pairingOpen`) |
+| GET/POST | `/pair/code` | Loopback-only current/rotated code + QR payload |
+| POST | `/pair` | One-time code → device token (`201`) |
+| GET | `/devices/me` | This device's record, including push subscriptions |
+| DELETE | `/devices/me` | Unpair this device and close its streams |
+| PUT | `/devices/me/push` | Register/replace this device's FCM/APNs token |
+| PUT | `/devices/me/push/subscriptions` | Set `approval` / `question` / `turnEnd` |
+| DELETE | `/devices/me/push` | Remove this device's push registration |
+| POST | `/presence` | Foreground claim (`{ foreground: boolean }`) |
+| GET | `/speech` | Host speech provider readiness |
+| POST | `/speech/transcribe` | Transcribe one canonical base64 WAV |
+| GET | `/sessions` | Session list with title projections and optional `vitals` |
 | POST | `/sessions` | Create/reuse a blank Session |
-| GET | `/sessions/:id/transcript` | Message-aligned history page |
-| GET | `/sessions/:id/files?path=` | Read-only directory listing, confined to the Session cwd (300 entries max) |
-| GET | `/sessions/:id/file?path=` | UTF-8 text preview, confined to the Session cwd (256 KiB max) |
+| PATCH | `/sessions/:id` | Rename (`{ "title": string }`) |
+| PUT | `/sessions/:id/pin` | Pin/unpin (`{ "pinned": boolean }`) |
+| PUT | `/sessions/:id/archive` | Archive/unarchive (`{ "archived": boolean, "stopActivity"?: boolean }`) |
+| PUT | `/sessions/:id/model` | Select provider/model (`{ provider, model, reasoningEffort? }`) |
+| GET | `/sessions/:id/model` | Current selection |
+| GET | `/sessions/:id/transcript?beforeSeq=&limit=` | Message-aligned history page |
 | GET | `/sessions/:id/state` | Running/queue state + projections |
+| POST | `/sessions/:id/prompt` | Send text (`queue` or `steer`), `202` |
+| POST | `/sessions/:id/cancel` | Stop the current turn, `202` |
+| POST | `/sessions/:id/fork` | Child Session at an optional inclusive `atSeq`, `201` |
+| POST | `/sessions/:id/uploads` | Raw attachment bytes (`?kind=&name=&mediaType=`), `201` |
+| GET | `/sessions/:id/events` | SSE follow stream (snapshot + events) |
+| GET | `/sessions/:id/files?path=` | Directory listing inside the Session cwd (300 entries max) |
+| GET | `/sessions/:id/file?path=`, `/sessions/:id/raw?path=` | UTF-8 preview / base64 byte chunk |
 | GET | `/sessions/:id/terminals` | List retained phone terminals |
 | POST | `/sessions/:id/terminals` | Open a PTY in the Session working directory |
 | GET | `/sessions/:id/terminals/:tid/events` | SSE replay + live terminal output |
 | POST | `/sessions/:id/terminals/:tid/input` | Write terminal input |
 | POST | `/sessions/:id/terminals/:tid/resize` | Resize the PTY |
-| DELETE | `/sessions/:id/terminals/:tid` | Terminate the terminal |
-| GET | `/sessions/:id/events` | SSE follow stream (snapshot + events) |
-| POST | `/sessions/:id/prompt` | Send text (`queue` or `steer`) |
-| POST | `/sessions/:id/rename` | Rename |
-| POST | `/sessions/:id/fork` | Create a child Session at an optional inclusive `atSeq` prefix |
+| DELETE | `/sessions/:id/terminals/:tid` | Terminate the terminal (`204`) |
+| POST | `/sessions/:id/questions/:callId/answer` | Answer a continued question |
 | GET | `/workspaces` | Workspace registry (id, path, title) |
 | POST | `/workspaces` | Adopt an existing directory (`{ "path", "title"? }`) |
-| PUT | `/workspaces/:id` | Rename a workspace (`{ "title": string }`); duplicate titles are allowed, like dsh Web |
-| POST | `/sessions/:id/cancel` | Stop the current turn |
-| GET | `/web-url` | This Host's Web UI, with the process launch token already attached |
-| GET | `/read-state` | Shared read watermarks; proxied to dsh-tag |
-| POST | `/read-state` | Merge this device's watermarks (`{ "sessions": { id: { readAt, unread, at } } }`) and return the merged map |
+| PUT | `/workspaces/:id` | Rename a workspace (`{ "title": string }`) |
+| GET | `/workspaces/:id/files`, `/workspaces/:id/file`, `/workspaces/:id/raw` | Same file surface, keyed by workspace |
+| GET | `/schedules` | Automation catalog; `available: false` without a schedule service |
+| GET | `/schedules/marks` | Active scheduled-task counts per Session (drawer clock) |
+| GET | `/schedules/:id` | One task with target, last delivery and execution flags |
+| GET | `/schedules/:id/history?limit=&before=` | Delivery history, newest first |
+| POST | `/schedules/:id/run` | Deliver one occurrence now |
+| PUT | `/schedules/:id` | Pause/resume (`{ "active": boolean, "expectedUpdatedAt"?: string }`) |
+| DELETE | `/schedules/:id` | Delete the task and its saved deliveries |
+| GET | `/read-state` | Shared read watermarks (proxied to dsh-tag) |
+| PATCH | `/read-state` | Merge this device's watermarks and return the merged map |
 | GET | `/events` | Global SSE: approvals, questions, sessions, turn end |
-| GET | `/approvals` | Pending approvals (optional `preview`: command/diff/URL/path) |
-| POST | `/approvals/:id` | `allow` / `always` / `deny` |
+| GET | `/approvals` | Pending approvals |
+| POST | `/approvals/:id/decision` | `allow` / `always` / `deny` |
 | GET | `/questions` | Pending questions |
 | POST | `/questions/:id/answer` | Structured answer batch |
-| POST | `/sessions/:id/questions/:callId/answer` | Answer a continued question |
+| GET | `/web-url` | This Host's Web UI, launch token attached |
 | POST | `/debug/approval` | Debug-only synthetic approval (enableDebugRoutes) |
 | POST | `/debug/question` | Debug-only synthetic question (enableDebugRoutes) |
+
+Admin page (browser session or loopback):
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/admin/data` | Code, QR, lock, policy, paired devices |
+| POST | `/admin/pair-code` | Rotate / set fixed / auto |
+| POST | `/admin/interaction` | `phone-first` / `browser-first` / `browser-only` |
+| POST | `/admin/lock` | Lock or unlock pairing |
+| PUT | `/admin/devices/:id` | Rename a paired device |
+| DELETE | `/admin/devices/:id` | Revoke a paired device |
 
 A schedule delivery receipt acknowledges that the target Session persisted the
 message, not that the Agent finished or succeeded. Open the target Session for

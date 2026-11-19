@@ -74,20 +74,6 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
 
   router.add({
     method: 'GET',
-    pattern: '/pair',
-    auth: 'public',
-    handler: (rc) => {
-      const status = deps.pairing.status()
-      sendJson(rc.res, 200, {
-        server: serverFacts(deps, requestOrigin(deps, rc)),
-        features: features(deps),
-        pairing: { open: status.pairingOpen },
-      })
-    },
-  })
-
-  router.add({
-    method: 'GET',
     pattern: '/pair/code',
     auth: 'public',
     handler: async (rc) => {
@@ -168,31 +154,31 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
 
   router.add({
     method: 'GET',
-    pattern: '/devices',
+    pattern: '/devices/me',
     auth: 'device',
     handler: (rc) => {
-      sendJson(rc.res, 200, {
-        current: rc.device?.deviceId,
-        items: deps.devices.list(),
-      })
+      const device = deps.devices.list().find(item => item.deviceId === rc.device?.deviceId)
+      if (device === undefined) throw new HttpError(404, 'device-not-found', 'this device is no longer paired')
+      sendJson(rc.res, 200, { device })
     },
   })
 
   router.add({
     method: 'DELETE',
-    pattern: '/devices/:id',
+    pattern: '/devices/me',
     auth: 'device',
     handler: async (rc) => {
-      const removed = await deps.devices.revoke(rc.params.id!)
-      if (!removed) throw new HttpError(404, 'device-not-found', 'no such device')
-      deps.hub.closeDevice(rc.params.id!)
+      const deviceId = rc.device!.deviceId
+      const removed = await deps.devices.revoke(deviceId)
+      if (!removed) throw new HttpError(404, 'device-not-found', 'this device is no longer paired')
+      deps.hub.closeDevice(deviceId)
       sendNoContent(rc.res)
     },
   })
 
   router.add({
-    method: 'POST',
-    pattern: '/push/register',
+    method: 'PUT',
+    pattern: '/devices/me/push',
     auth: 'device',
     handler: async (rc) => {
       const body = rc.body as { provider?: unknown; token?: unknown } | undefined
@@ -213,7 +199,7 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
 
   router.add({
     method: 'PUT',
-    pattern: '/push/subscriptions',
+    pattern: '/devices/me/push/subscriptions',
     auth: 'device',
     handler: async (rc) => {
       const body = rc.body as { approval?: unknown; question?: unknown; turnEnd?: unknown } | undefined
@@ -229,7 +215,7 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
 
   router.add({
     method: 'DELETE',
-    pattern: '/push',
+    pattern: '/devices/me/push',
     auth: 'device',
     handler: async (rc) => {
       await deps.devices.clearPush(rc.device!.deviceId)
@@ -424,7 +410,7 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
   })
 
   router.add({
-    method: 'POST',
+    method: 'PATCH',
     pattern: '/read-state',
     auth: 'device',
     handler: async (rc) => {
@@ -455,7 +441,7 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
   })
 
   router.add({
-    method: 'POST',
+    method: 'PUT',
     pattern: '/sessions/:id/model',
     auth: 'device',
     handler: async (rc) => {
@@ -487,10 +473,10 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
     auth: 'device',
     handler: async (rc) => {
       const beforeSeq = numberParam(rc.query.get('beforeSeq'))
-      const maxMessages = numberParam(rc.query.get('maxMessages'))
+      const limit = numberParam(rc.query.get('limit'))
       const response: SessionTranscriptResponse = await deps.sessions.transcript(rc.params.id!, {
         ...(beforeSeq === undefined ? {} : { beforeSeq }),
-        ...(maxMessages === undefined ? {} : { maxMessages }),
+        ...(limit === undefined ? {} : { maxMessages: limit }),
       }, rc.signal)
       sendJson(rc.res, 200, response)
     },
@@ -592,8 +578,8 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
   })
 
   router.add({
-    method: 'POST',
-    pattern: '/sessions/:id/rename',
+    method: 'PATCH',
+    pattern: '/sessions/:id',
     auth: 'device',
     handler: async (rc) => {
       const body = rc.body as { title?: unknown } | undefined
@@ -633,13 +619,17 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
   })
 
   router.add({
-    method: 'POST',
+    method: 'PUT',
     pattern: '/sessions/:id/pin',
     auth: 'device',
     handler: async (rc) => {
+      const body = rc.body as { pinned?: unknown } | undefined
+      if (typeof body?.pinned !== 'boolean') {
+        throw new HttpError(400, 'bad-pin', 'pinned must be true or false')
+      }
       try {
-        await setSessionPinned(deps.ctx, rc.params.id!, true)
-        sendJson(rc.res, 200, { ok: true })
+        await setSessionPinned(deps.ctx, rc.params.id!, body.pinned)
+        sendJson(rc.res, 200, { pinned: body.pinned })
       } catch (error) {
         throw new HttpError(409, 'session-pin-failed', shortError(error))
       }
@@ -647,42 +637,17 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
   })
 
   router.add({
-    method: 'POST',
-    pattern: '/sessions/:id/unpin',
-    auth: 'device',
-    handler: async (rc) => {
-      try {
-        await setSessionPinned(deps.ctx, rc.params.id!, false)
-        sendJson(rc.res, 200, { ok: true })
-      } catch (error) {
-        throw new HttpError(409, 'session-pin-failed', shortError(error))
-      }
-    },
-  })
-
-  router.add({
-    method: 'POST',
+    method: 'PUT',
     pattern: '/sessions/:id/archive',
     auth: 'device',
     handler: async (rc) => {
-      const body = (rc.body ?? {}) as { stopActivity?: unknown }
-      try {
-        await setSessionArchived(deps.ctx, rc.params.id!, true, body.stopActivity === true)
-        sendJson(rc.res, 200, { ok: true })
-      } catch (error) {
-        throw new HttpError(409, 'session-archive-failed', shortError(error))
+      const body = rc.body as { archived?: unknown; stopActivity?: unknown } | undefined
+      if (typeof body?.archived !== 'boolean') {
+        throw new HttpError(400, 'bad-archive', 'archived must be true or false')
       }
-    },
-  })
-
-  router.add({
-    method: 'POST',
-    pattern: '/sessions/:id/unarchive',
-    auth: 'device',
-    handler: async (rc) => {
       try {
-        await setSessionArchived(deps.ctx, rc.params.id!, false)
-        sendJson(rc.res, 200, { ok: true })
+        await setSessionArchived(deps.ctx, rc.params.id!, body.archived, body.archived && body.stopActivity === true)
+        sendJson(rc.res, 200, { archived: body.archived })
       } catch (error) {
         throw new HttpError(409, 'session-archive-failed', shortError(error))
       }

@@ -16,7 +16,7 @@
       "dshMinor": "0.2.2",
       "hello": "0.1.5",
       "app": "0.1.0",
-      "protocol": 1,
+      "protocol": 2,
       "result": "pass",
       "testedAt": "2026-11-16",
       "notes": "Local manual smoke: pairing, sessions, transcript, approvals, schedules, workspace rename, files, terminal."
@@ -26,7 +26,7 @@
       "dshMinor": "0.2.2",
       "hello": "0.1.5",
       "app": "0.1.0",
-      "protocol": 1,
+      "protocol": 2,
       "result": "pending",
       "testedAt": null,
       "notes": "Static API review only. Additive changes; runtime matrix pending."

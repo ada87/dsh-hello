@@ -644,7 +644,7 @@ test('approval is claimed, pushed to SSE, and resolved by HTTP', async () => {
     assert.equal(item.displayReason?.en, 'Run a command')
     await sse.waitFor('Approval')
 
-    const response = await fetch(`${state.base}/approvals/${item.id}`, {
+    const response = await fetch(`${state.base}/approvals/${item.id}/decision`, {
       method: 'POST',
       headers: { authorization: `Bearer ${state.token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ decision: 'allow' }),
@@ -664,7 +664,7 @@ test('always creates a session-wide tool grant and skips the app', async () => {
       () => Promise.resolve('unavailable'),
     )
     const item = await waitForApproval(state)
-    const response = await fetch(`${state.base}/approvals/${item.id}`, {
+    const response = await fetch(`${state.base}/approvals/${item.id}/decision`, {
       method: 'POST',
       headers: { authorization: `Bearer ${state.token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ decision: 'always' }),
@@ -805,7 +805,7 @@ test('schedule routes expose detail, history and actions', async () => {
   const missing = await fetch(`${state.base}/schedules/missing`, { headers })
   assert.equal(missing.status, 404)
 
-  const marks = await fetch(`${state.base}/schedule-marks`, { headers })
+  const marks = await fetch(`${state.base}/schedules/marks`, { headers })
   assert.equal(marks.status, 200)
   const marksBody = await marks.json() as { items: Array<{ sessionId: string; count: number }> }
   assert.equal(marksBody.items[0]?.sessionId, sessionId)
@@ -893,7 +893,7 @@ test('debug routes create and resolve synthetic approvals and questions', async 
     const approval = await approvalResponse.json() as { id: string; toolName: string }
     assert.equal(approval.toolName, 'bash')
     await sse.waitFor('debug launch')
-    const allowed = await fetch(`${state.base}/approvals/${approval.id}`, {
+    const allowed = await fetch(`${state.base}/approvals/${approval.id}/decision`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ decision: 'allow' }),
@@ -921,17 +921,17 @@ test('debug routes create and resolve synthetic approvals and questions', async 
 test('each device can update its push subscriptions', async () => {
   const headers = { authorization: `Bearer ${state.token}`, 'content-type': 'application/json' }
   const subscriptions = { approval: true, question: false, turnEnd: false }
-  const updated = await fetch(`${state.base}/push/subscriptions`, {
+  const updated = await fetch(`${state.base}/devices/me/push/subscriptions`, {
     method: 'PUT',
     headers,
     body: JSON.stringify(subscriptions),
   })
   assert.equal(updated.status, 200)
-  const devices = await fetch(`${state.base}/devices`, { headers })
-  const body = await devices.json() as { current: string; items: Array<{ deviceId: string; subscriptions: typeof subscriptions }> }
-  assert.deepEqual(body.items.find(item => item.deviceId === body.current)?.subscriptions, subscriptions)
+  const devices = await fetch(`${state.base}/devices/me`, { headers })
+  const body = await devices.json() as { device: { deviceId: string; subscriptions: typeof subscriptions } }
+  assert.deepEqual(body.device.subscriptions, subscriptions)
 
-  const restored = await fetch(`${state.base}/push/subscriptions`, {
+  const restored = await fetch(`${state.base}/devices/me/push/subscriptions`, {
     method: 'PUT',
     headers,
     body: JSON.stringify({ approval: true, question: true, turnEnd: true }),
@@ -959,7 +959,7 @@ test('revoking a device closes its open event streams', async () => {
   await events.waitFor('hello')
   await session.waitFor('ready')
   try {
-    const removed = await fetch(`${state.base}/devices/${device.deviceId}`, {
+    const removed = await fetch(`${state.base}/devices/me`, {
       method: 'DELETE',
       headers: { authorization: `Bearer ${device.token}` },
     })

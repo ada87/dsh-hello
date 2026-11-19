@@ -6,7 +6,7 @@
  */
 
 /** Protocol version; bump on a breaking wire change. */
-export const PROTOCOL_VERSION = 1
+export const PROTOCOL_VERSION = 2
 
 /** The prefix every app route is served under. */
 export interface ServerFacts {

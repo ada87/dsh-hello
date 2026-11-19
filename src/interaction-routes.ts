@@ -45,7 +45,7 @@ export function registerInteractionRoutes(router: HttpRouter, deps: RouteDepende
 
   router.add({
     method: 'POST',
-    pattern: '/approvals/:id',
+    pattern: '/approvals/:id/decision',
     auth: 'device',
     handler: (rc) => {
       const body = rc.body as { decision?: unknown } | undefined

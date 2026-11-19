@@ -29,7 +29,7 @@ export function registerScheduleRoutes(router: HttpRouter, deps: RouteDependenci
 
   router.add({
     method: 'GET',
-    pattern: '/schedule-marks',
+    pattern: '/schedules/marks',
     auth: 'device',
     handler: async (rc) => {
       sendJson(rc.res, 200, await sessionScheduleMarks(deps.ctx, rc.signal))
