@@ -15,6 +15,17 @@ window.__ModuleLoader__.load({
     const { Button, Input } = require('@deepseek-ai/dsh-client-ui-primitives')
     const h = React.createElement
 
+    /** Wrap one phrase of a sentence in <strong> without adding markup keys. */
+    const emphasize = (text, phrase) => {
+      const at = phrase.length === 0 ? -1 : text.indexOf(phrase)
+      if (at < 0) return text
+      return [
+        text.slice(0, at),
+        h('strong', { key: 'em' }, phrase),
+        text.slice(at + phrase.length),
+      ]
+    }
+
     const NS = 'dshDoorAdmin'
     const injected = globalThis.__DSH_DOOR__
     const BASE = typeof injected?.basePath === 'string' && injected.basePath.length > 0
@@ -55,6 +66,7 @@ window.__ModuleLoader__.load({
 .dd-modalBackdrop{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35)}
 .dd-modal{display:flex;flex-direction:column;gap:12px;width:min(380px,90vw);padding:18px;border-radius:12px;background:var(--dsw-alias-surface-primary,#fff);box-shadow:0 12px 40px rgba(0,0,0,.28)}
 .dd-modalTitle{margin:0;font-size:16px;font-weight:600;color:var(--dsw-alias-label-primary,#111)}
+.dd-modal .dd-desc strong{font-weight:600;color:var(--dsw-alias-label-primary,#111)}
 .dd-modalActions{display:flex;justify-content:flex-end;gap:8px}
 .dd-modalInput{box-sizing:border-box;width:100%;max-width:100%;min-width:0}
 .dd-qr{font-size:10px;line-height:1;overflow:auto;margin:0;color:var(--dsw-alias-label-secondary);max-height:220px}
@@ -109,6 +121,8 @@ window.__ModuleLoader__.load({
       modify: '修改',
       setPermanentTitle: '设置永久配对码',
       setPermanentDesc: '输入 4 位数字，将作为永久配对码。',
+      digitsFour: '4 位数字',
+      digitsNew: '新的 4 位数字',
       modifyTitle: '修改永久配对码',
       modifyDesc: '输入新的 4 位数字，旧永久码会立即失效。',
       passwordPlaceholder: '4 位数字',
@@ -156,6 +170,8 @@ window.__ModuleLoader__.load({
       modify: 'Change',
       setPermanentTitle: 'Set a permanent pairing code',
       setPermanentDesc: 'Enter four digits to use as the permanent pairing code.',
+      digitsFour: 'four digits',
+      digitsNew: 'four new digits',
       modifyTitle: 'Change the permanent pairing code',
       modifyDesc: 'Enter four new digits; the old permanent code stops working immediately.',
       passwordPlaceholder: 'Four digits',
@@ -576,7 +592,7 @@ window.__ModuleLoader__.load({
               h('h3', { className: 'dd-modalTitle' },
                 fixed ? t('modifyTitle') : t('setPermanentTitle')),
               h('p', { className: 'dd-desc' },
-                fixed ? t('modifyDesc') : t('setPermanentDesc')),
+                emphasize(fixed ? t('modifyDesc') : t('setPermanentDesc'), fixed ? t('digitsNew') : t('digitsFour'))),
               h(Input, {
                 className: 'dd-modalInput',
                 value: password,
