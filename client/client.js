@@ -59,6 +59,8 @@ window.__ModuleLoader__.load({
 .dd-modalInput{box-sizing:border-box;width:100%;max-width:100%;min-width:0}
 .dd-qr{font-size:10px;line-height:1;overflow:auto;margin:0;color:var(--dsw-alias-label-secondary);max-height:220px}
 .dd-qr-img{display:flex;justify-content:flex-start;align-self:flex-start;background:#fff;border-radius:8px;padding:8px}
+.dd-qr-failed{display:flex;flex-direction:column;gap:4px}
+.dd-qr-reason{font-family:ui-monospace,monospace;font-size:11px;line-height:1.4;color:var(--dsw-alias-label-tertiary,#888);word-break:break-all}
 .dd-qr-img svg{width:220px;height:220px;display:block}
 .dd-table{width:100%;border-collapse:collapse;font-size:13px}
 .dd-table th,.dd-table td{text-align:left;padding:8px 0;border-bottom:0.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.18));color:var(--dsw-alias-label-secondary)}
@@ -114,6 +116,7 @@ window.__ModuleLoader__.load({
       confirm: '确定',
       cancel: '取消',
       qrTitle: '扫码/输入',
+      qrFailed: '二维码生成失败',
       qrLoading: '二维码加载中…',
       qrHint: '请用手机打开 DSH Hello，连接 → 添加服务器 → 使用插件配对 → 扫描二维码。',
       devices: '已配对设备',
@@ -160,6 +163,7 @@ window.__ModuleLoader__.load({
       confirm: 'Confirm',
       cancel: 'Cancel',
       qrTitle: 'Scan or type',
+      qrFailed: 'Could not build the QR code',
       qrLoading: 'Loading QR…',
       qrHint: 'Open DSH Hello on your phone, then Connection → Add server → Plugin pairing → Scan QR code.',
       devices: 'Paired devices',
@@ -481,9 +485,13 @@ window.__ModuleLoader__.load({
                 ),
                 h('div', { className: 'dd-block', key: 'qr' },
                   h('span', { className: 'dd-label' }, t('qrTitle')),
-                  typeof data?.qrSvg === 'string' && data.qrSvg.startsWith('<svg')
+                  typeof data?.qrSvg === 'string' && data.qrSvg.trimStart().startsWith('<svg')
                     ? h('div', { className: 'dd-qr-img', dangerouslySetInnerHTML: { __html: data.qrSvg } })
-                    : h('span', { className: 'dd-desc' }, t('qrFailed')),
+                    : h('div', { className: 'dd-qr-failed' },
+                      h('span', { className: 'dd-desc' }, t('qrFailed')),
+                      typeof data?.qrError === 'string' && data.qrError.length > 0
+                        ? h('span', { className: 'dd-qr-reason' }, data.qrError)
+                        : null),
                   h('span', { className: 'dd-desc' }, t('qrHint')),
                 ),
               ],

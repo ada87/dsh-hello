@@ -1,4 +1,6 @@
 import { open } from 'node:fs/promises'
+import qrCore from 'qrcode/lib/core/qrcode'
+import qrSvg from 'qrcode/lib/renderer/svg'
 import {
   agentPresetsAvailable,
   createWorkspace,
@@ -1364,7 +1366,7 @@ async function adminData(deps: RouteDependencies, originBase: string): Promise<R
   const origin = originBase
   const payload = JSON.stringify({ v: 1, url: `${origin}${deps.config.basePath}`, code: view.code })
   const qr = await renderQr(payload)
-  const qrSvg = await renderQrSvg(payload)
+  const { svg: qrSvg, error: qrError } = await renderQrSvg(payload)
   return {
     code: view.code,
     formatted: view.formatted,
@@ -1376,6 +1378,7 @@ async function adminData(deps: RouteDependencies, originBase: string): Promise<R
     basePath: deps.config.basePath,
     qr,
     qrSvg,
+    qrError,
     time: Date.now(),
     devices: deps.devices.list().map(device => ({
       deviceId: device.deviceId,
@@ -1466,58 +1469,32 @@ async function renderQr(text: string): Promise<string | null> {
 }
 
 /**
- * Resolve `qrcode`'s API however this Host loaded the plugin.
+ * Build the pairing QR without `qrcode`'s entry point.
  *
- * `mod.default ?? mod` is not enough: depending on how the loader interops the
- * CommonJS package, that expression can land on a plain object, and its
- * inherited `Object.prototype.toString` then returns the string
- * "[object Object]" — which the admin page rendered as the QR. Accept only an
- * object with a real `toString`, and fall back to `createRequire`.
+ * `qrcode/lib/index.js` -> `server.js` loads the PNG renderer, and that pulls
+ * `pngjs`, whose `require('fs')` cannot run inside an ESM bundle. The SVG
+ * renderer and the core encoder are pure JavaScript, so importing them
+ * directly keeps the QR dependency bundled and free of runtime resolution.
  */
-async function loadQrSvgApi(): Promise<{ toString(input: string, options?: unknown): Promise<string> } | null> {
-  const isApi = (value: unknown): value is { toString(input: string, options?: unknown): Promise<string> } =>
-    typeof value === 'object'
-    && value !== null
-    && typeof (value as { toString?: unknown }).toString === 'function'
-    && (value as { toString: unknown }).toString !== Object.prototype.toString
-
+async function renderQrSvg(text: string): Promise<{ svg: string | null; error: string | null }> {
   try {
-    const mod = (await import('qrcode')) as { default?: { default?: unknown } }
-    for (const candidate of [mod.default, mod.default?.default, mod]) {
-      if (isApi(candidate)) return candidate
-    }
-  } catch (error) {
-    console.warn('[dsh-hello] could not import qrcode through ESM:', error)
-  }
-  try {
-    const { createRequire } = await import('node:module')
-    const required = createRequire(import.meta.url)('qrcode') as unknown
-    if (isApi(required)) return required
-  } catch (error) {
-    console.warn('[dsh-hello] could not require qrcode:', error)
-  }
-  return null
-}
-
-async function renderQrSvg(text: string): Promise<string | null> {
-  const qrcode = await loadQrSvgApi()
-  if (qrcode === null) {
-    console.warn('[dsh-hello] qrcode is unavailable; the admin page will not show a QR code')
-    return null
-  }
-  try {
-    const svg = await qrcode.toString(text, {
-      type: 'svg',
+    const data = qrCore.create(text, { errorCorrectionLevel: 'M' })
+    const svg = qrSvg.render(data, {
       margin: 1,
       width: 320,
-      errorCorrectionLevel: 'M',
       color: { dark: '#0b0e14', light: '#ffffff' },
     })
-    // Never hand the page something that is not an SVG: a bad value used to
-    // render as the literal text "[object Object]".
-    return typeof svg === 'string' && svg.trimStart().startsWith('<svg') ? svg : null
+    if (typeof svg !== 'string') {
+      console.warn('[dsh-hello] QR encoder returned', typeof svg, 'instead of an SVG string')
+      return { svg: null, error: `encoder-returned-${typeof svg}` }
+    }
+    if (!svg.trimStart().startsWith('<svg')) {
+      console.warn('[dsh-hello] QR encoder returned a non-SVG string:', svg.slice(0, 80))
+      return { svg: null, error: `encoder-returned-text:${svg.trim().slice(0, 40)}` }
+    }
+    return { svg, error: null }
   } catch (error) {
     console.warn('[dsh-hello] QR SVG generation failed:', error)
-    return null
+    return { svg: null, error: `encoder-failed:${error instanceof Error ? error.message : String(error)}`.slice(0, 200) }
   }
 }
