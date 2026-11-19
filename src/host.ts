@@ -28,8 +28,8 @@ export interface HostResponse {
   headersSent: boolean
   setHeader(name: string, value: string | string[]): void
   writeHead(status: number, headers?: Record<string, string | string[]>): void
-  write(chunk: string): boolean
-  end(chunk?: string): void
+  write(chunk: string | Uint8Array): boolean
+  end(chunk?: string | Uint8Array): void
   readonly writableEnded: boolean
   readonly destroyed?: boolean
   on(event: 'close' | 'error', listener: () => void): void

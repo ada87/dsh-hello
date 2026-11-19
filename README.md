@@ -346,6 +346,7 @@ caller), because the settings page talks to it.
 | GET | `/sessions/:id/events` | SSE follow stream (snapshot + events) |
 | GET | `/sessions/:id/files?path=` | Directory listing inside the Session cwd (300 entries max) |
 | GET | `/sessions/:id/file?path=`, `/sessions/:id/raw?path=` | UTF-8 preview / base64 byte chunk |
+| GET | /sessions/:id/image?path=, /workspaces/:id/image?path= | Raw image bytes for markdown image tags (device header auth, 24 MiB cap) |
 | GET | `/sessions/:id/terminals` | List retained phone terminals |
 | POST | `/sessions/:id/terminals` | Open a PTY in the Session working directory |
 | GET | `/sessions/:id/terminals/:tid/events` | SSE replay + live terminal output |

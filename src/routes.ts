@@ -1,4 +1,4 @@
-import { open } from 'node:fs/promises'
+import { open, readFile } from 'node:fs/promises'
 import {
   createWorkspace,
   currentSessionModel,
@@ -303,6 +303,32 @@ export function registerRoutes(router: HttpRouter, deps: RouteDependencies): voi
       if (path === null || path.length === 0) throw new HttpError(400, 'empty-path', 'path is required')
       const file = await resolveWorkspaceBinary(deps.ctx, { sessionId: rc.params.id! }, path, rc.signal)
       await sendBinary(rc, file)
+    },
+  })
+
+  // Markdown images: the app points RN Image at this URL with its device token
+  // header, so the bytes never pass through JS.
+  router.add({
+    method: 'GET',
+    pattern: '/sessions/:id/image',
+    auth: 'device',
+    handler: async (rc) => {
+      const path = rc.query.get('path')
+      if (path === null || path.length === 0) throw new HttpError(400, 'empty-path', 'path is required')
+      const file = await resolveWorkspaceBinary(deps.ctx, { sessionId: rc.params.id! }, path, rc.signal)
+      await sendFile(rc, file)
+    },
+  })
+
+  router.add({
+    method: 'GET',
+    pattern: '/workspaces/:id/image',
+    auth: 'device',
+    handler: async (rc) => {
+      const path = rc.query.get('path')
+      if (path === null || path.length === 0) throw new HttpError(400, 'empty-path', 'path is required')
+      const file = await resolveWorkspaceBinary(deps.ctx, { workspaceId: rc.params.id! }, path, rc.signal)
+      await sendFile(rc, file)
     },
   })
 
@@ -731,6 +757,19 @@ function randomPairingToken(): string {
   const bytes = new Uint8Array(32)
   globalThis.crypto.getRandomValues(bytes)
   return `dshd_${Buffer.from(bytes).toString('base64url')}`
+}
+
+/** Stream one image with its real content type; used by markdown image tags. */
+async function sendFile(rc: RouteContext, file: { filename: string; size: number; contentType: string }): Promise<void> {
+  const maxBytes = 24 * 1024 * 1024
+  if (file.size > maxBytes) throw new HttpError(413, 'file-too-large', 'the image is larger than 24 MiB')
+  const bytes = await readFile(file.filename)
+  rc.res.statusCode = 200
+  rc.res.setHeader('Content-Type', file.contentType)
+  rc.res.setHeader('Content-Length', String(bytes.byteLength))
+  rc.res.setHeader('Cache-Control', 'private, max-age=300')
+  rc.res.setHeader('X-Content-Type-Options', 'nosniff')
+  rc.res.end(bytes)
 }
 
 async function sendBinary(rc: RouteContext, file: { filename: string; size: number; contentType: string }): Promise<void> {
