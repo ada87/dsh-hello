@@ -1,6 +1,6 @@
 import { createPrivateKey, createSign, sign as cryptoSign } from 'node:crypto'
 import { connect } from 'node:http2'
-import type { Config, PushConfig } from './config.js'
+import type { Config, PushConfig, WebhookFormat, WebhookTarget } from './config.js'
 import type { CredentialProviderService } from './host.js'
 import type { DeviceStore, PushKind } from './devices.js'
 import { shortError } from './util.js'
@@ -11,15 +11,25 @@ export interface PushPayload {
   data: Record<string, string>
 }
 
+/** Bodies for `webhookContent: 'minimal'`: never carries conversation text. */
+const MINIMAL_BODY: Record<PushKind, string> = {
+  approval: 'A tool call needs approval',
+  question: 'The agent is waiting for an answer',
+  'turn-end': 'The agent finished its turn',
+}
+
 /**
- * Direct APNs/FCM sender. There is no relay: credentials come from the
- * deployment's own service account or APNs key, so the plugin author never
- * sees user sessions.
+ * Direct APNs/FCM sender plus outbound webhooks. There is no relay: credentials
+ * come from the deployment's own service account or APNs key, so the plugin
+ * author never sees user sessions. Webhooks are independent of the app push
+ * provider, so a deployment without FCM/APNs still gets notifications.
  */
 export class PushManager {
   private fcmToken: { value: string; expiresAt: number } | undefined
   private apnsToken: { value: string; createdAt: number } | undefined
   private remote: Partial<PushConfig> = {}
+  /** Last send per `url|kind`, so a burst does not spam one target. */
+  private readonly lastWebhook = new Map<string, number>()
 
   constructor(
     private readonly config: Config,
@@ -103,15 +113,38 @@ export class PushManager {
   }
 
   notify(kind: PushKind, payload: unknown): void {
-    if (!this.isConfigured()) return
     const push = this.push
-    if (kind === 'approval' && !push.notifyApproval) return
-    if (kind === 'question' && !push.notifyQuestion) return
-    if (kind === 'turn-end' && !push.notifyTurnEnd) return
+    const enabled = kind === 'approval' ? push.notifyApproval : kind === 'question' ? push.notifyQuestion : push.notifyTurnEnd
+    if (!enabled) return
+    const toApp = this.isConfigured()
+    if (!toApp && push.webhooks.length === 0) return
     const message = render(kind, payload, this.hostId)
-    void this.send(message, kind).catch((error: unknown) => {
-      this.logger.warn(`[dsh-hello] push failed: ${shortError(error)}`)
-    })
+    if (toApp) {
+      void this.send(message, kind).catch((error: unknown) => {
+        this.logger.warn(`[dsh-hello] push failed: ${shortError(error)}`)
+      })
+    }
+    for (const target of push.webhooks) {
+      void this.sendWebhook(target, kind, message).catch((error: unknown) => {
+        this.logger.warn(`[dsh-hello] webhook ${target.name} failed: ${shortError(error)}`)
+      })
+    }
+  }
+
+  private async sendWebhook(target: WebhookTarget, kind: PushKind, message: PushPayload): Promise<void> {
+    const push = this.push
+    const key = `${target.url}|${kind}`
+    const last = this.lastWebhook.get(key) ?? 0
+    if (Date.now() - last < push.webhookCooldownMs) return
+    this.lastWebhook.set(key, Date.now())
+    const body = push.webhookContent === 'standard' ? message.body : MINIMAL_BODY[kind]
+    const signal = AbortSignal.timeout(8000)
+    const request = webhookRequest(target.format, target.url, message, body, signal)
+    const response = await fetch(request.endpoint, request.init)
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      throw new Error(`${target.format} ${response.status}: ${text.slice(0, 200)}`)
+    }
   }
 
   private async send(message: PushPayload, kind: PushKind): Promise<void> {
@@ -344,5 +377,74 @@ function render(kind: 'approval' | 'question' | 'turn-end', payload: unknown, ho
 
 function truncate(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max - 1)}…`
+}
+
+interface WebhookRequest {
+  endpoint: string
+  init: { method: 'POST'; headers: Record<string, string>; body: string; signal: AbortSignal }
+}
+
+/** One request description per webhook flavour; each target just wants a POST. */
+function webhookRequest(
+  format: WebhookFormat,
+  url: string,
+  message: PushPayload,
+  body: string,
+  signal: AbortSignal,
+): WebhookRequest {
+  const post = (payload: unknown): WebhookRequest => ({
+    endpoint: url,
+    init: {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal,
+    },
+  })
+  switch (format) {
+    case 'wecom':
+      return post({ msgtype: 'markdown', markdown: { content: `**${message.title}**\n${body}` } })
+    case 'serverchan':
+      return {
+        endpoint: url,
+        init: {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ title: message.title, desp: body }).toString(),
+          signal,
+        },
+      }
+    case 'ntfy':
+      return {
+        endpoint: url,
+        init: {
+          method: 'POST',
+          headers: { 'content-type': 'text/plain', Title: message.title, Tags: 'dsh' },
+          body,
+          signal,
+        },
+      }
+    case 'bark': {
+      // Accept either `https://api.day.app/<key>` or the full `/push` endpoint.
+      const parsed = new URL(url)
+      const segment = parsed.pathname.split('/').filter(Boolean).pop() ?? ''
+      return {
+        endpoint: segment === 'push' ? url : new URL('/push', parsed.origin).toString(),
+        init: {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            ...(segment === 'push' ? {} : { device_key: segment }),
+            title: message.title,
+            body,
+            group: 'dsh',
+          }),
+          signal,
+        },
+      }
+    }
+    default:
+      return post({ kind: message.data.kind ?? '', title: message.title, body, data: message.data })
+  }
 }
 

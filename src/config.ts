@@ -4,6 +4,17 @@
  */
 import Schema from '@deepseek-ai/schemastery'
 
+export type WebhookFormat = 'wecom' | 'serverchan' | 'ntfy' | 'bark' | 'generic'
+
+/** One outbound notification target, independent of the app push provider. */
+export interface WebhookTarget {
+  /** Label used in logs. */
+  name: string
+  /** Full endpoint, e.g. https://ntfy.sh/my-topic or a WeCom bot URL. */
+  url: string
+  format: WebhookFormat
+}
+
 export interface PushConfig {
   /** Push transport. `none` disables outbound notifications entirely. */
   provider: 'none' | 'fcm' | 'apns' | 'relay'
@@ -31,6 +42,12 @@ export interface PushConfig {
   notifyApproval: boolean
   /** Whether user questions are pushed. */
   notifyQuestion: boolean
+  /** Outbound webhooks; they work even when the app push provider is `none`. */
+  webhooks: WebhookTarget[]
+  /** Minimum gap between two sends to one target for the same kind. */
+  webhookCooldownMs: number
+  /** `minimal` keeps conversation text out of the body. */
+  webhookContent: 'minimal' | 'standard'
 }
 
 export type InteractionTarget = 'phone-first' | 'browser-first' | 'browser-only'
@@ -144,6 +161,13 @@ export const Config: Schema<Config> = Schema.object({
     notifyTurnEnd: Schema.boolean().default(true),
     notifyApproval: Schema.boolean().default(true),
     notifyQuestion: Schema.boolean().default(true),
+    webhooks: Schema.array(Schema.object({
+      name: Schema.string().default('webhook'),
+      url: Schema.string().required(),
+      format: Schema.union(['wecom', 'serverchan', 'ntfy', 'bark', 'generic'] as const).default('generic'),
+    })).default([]),
+    webhookCooldownMs: Schema.number().default(60 * 1000),
+    webhookContent: Schema.union(['minimal', 'standard'] as const).default('minimal'),
   }).default({}),
 })
 
@@ -183,6 +207,13 @@ export function normalizeConfig(input: Partial<Config> | undefined): Config {
       notifyTurnEnd: push.notifyTurnEnd ?? true,
       notifyApproval: push.notifyApproval ?? true,
       notifyQuestion: push.notifyQuestion ?? true,
+      webhooks: (push.webhooks ?? []).map(target => ({
+        name: target.name ?? 'webhook',
+        url: target.url.trim(),
+        format: target.format ?? 'generic',
+      })).filter(target => target.url.length > 0),
+      webhookCooldownMs: push.webhookCooldownMs ?? 60 * 1000,
+      webhookContent: push.webhookContent ?? 'minimal',
     },
   }
   if (raw.pairingCode !== undefined) config.pairingCode = raw.pairingCode
@@ -215,5 +246,8 @@ export const defaultPushConfig: PushConfig = {
   notifyTurnEnd: true,
   notifyApproval: true,
   notifyQuestion: true,
+  webhooks: [],
+  webhookCooldownMs: 60 * 1000,
+  webhookContent: 'minimal',
 }
 

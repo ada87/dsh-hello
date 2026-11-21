@@ -221,6 +221,7 @@ export class InteractionBroker {
       expiresAt,
     }
     this.hub.broadcast('question', envelope)
+    this.push.notify('question', envelope)
     return envelope
   }
 

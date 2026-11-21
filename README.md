@@ -17,7 +17,7 @@ relay server between the user's phone and the user's Host.
 - **Reply without opening a laptop.** Send a prompt, queue it behind the current turn, or steer mid-turn.
 - **Approve tool calls from the phone.** Allow, always-allow or deny; answer the agent's structured questions.
 - **Terminal and files.** Open a real PTY for the session, leave it running in the background, and browse the workspace.
-- **Push when you leave.** Optional FCM/APNs notifications for turn end, approvals and questions.
+- **Push when you leave.** Optional FCM/APNs notifications for turn end, approvals and questions, plus webhook targets (WeCom, ServerChan, ntfy, Bark, generic) that work without Google services.
 - **One token per device.** Pair once; revoke any device from Settings at any time.
 
 | Phone | Tablet |
@@ -309,6 +309,44 @@ or APNs:
 ```
 
 The plugin talks directly to Google/Apple; there is no author-operated relay.
+
+### Webhook notifications
+
+Webhooks are independent of the app push provider: they work with
+`provider: none`, and they do not need a phone token or GMS. Add one or more
+targets under `push.webhooks`:
+
+```yaml
+    push:
+      webhooks:
+        - name: wecom
+          url: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...
+          format: wecom
+        - name: ntfy
+          url: https://ntfy.sh/my-dsh-topic
+          format: ntfy
+        - name: bark
+          url: https://api.day.app/<device-key>
+          format: bark
+        - name: serverchan
+          url: https://<uid>.push.ft07.com/send/<sendkey>.send
+          format: serverchan
+        - name: hook
+          url: https://example.com/dsh
+          format: generic
+      webhookContent: minimal   # minimal | standard
+      webhookCooldownMs: 60000
+```
+
+- `wecom` posts a markdown bot message, `serverchan` posts `title`/`desp`,
+  `ntfy` posts the body with a `Title` header, `bark` accepts either
+  `https://api.day.app/<key>` or the full `/push` endpoint, and `generic` posts
+  JSON `{ kind, title, body, data }`.
+- `webhookContent: minimal` (default) never puts conversation text in the body;
+  `standard` sends the same rendered body as the app push.
+- `webhookCooldownMs` suppresses repeated sends to one target for the same kind
+  (turn end, approval, question), so a burst produces one notification.
+- The `notify*` switches gate webhooks too; a disabled kind is not sent anywhere.
 
 ## HTTP API
 
