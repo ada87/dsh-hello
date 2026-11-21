@@ -96,7 +96,12 @@ export function createSessionFacade(ctx: HostContext): SessionFacade {
     async list(signal) {
       const rowState = sessionRowState(ctx)
       const value = await controller.list({}, signal)
-      return Promise.all(value.items.map(item => toListItem(ctx, item, signal, rowState)))
+      // Newest prompt first; the phone keeps this order for the "recent" view
+      // and only overrides it with pinning/workspace order.
+      const rows = [...value.items].sort((left, right) => (
+        right.updatedAt - left.updatedAt || left.sessionId.localeCompare(right.sessionId)
+      ))
+      return rows.map(item => toListItem(item, rowState))
     },
 
     async transcript(sessionId, options, signal) {
@@ -167,7 +172,7 @@ export function createSessionFacade(ctx: HostContext): SessionFacade {
             agentAvailable: state.active,
             blank: false,
           }
-          : await toListItem(ctx, summary, signal, sessionRowState(ctx)),
+          : toListItem(summary, sessionRowState(ctx)),
       }
     },
 
@@ -222,13 +227,8 @@ export function createSessionFacade(ctx: HostContext): SessionFacade {
   }
 }
 
-async function toListItem(
-  ctx: HostContext,
-  summary: SessionSummary,
-  signal: AbortSignal,
-  rowState?: SessionListRowState,
-): Promise<SessionListItem> {
-  const projections = await readProjections(ctx, summary.sessionId, signal)
+function toListItem(summary: SessionSummary, rowState?: SessionListRowState): SessionListItem {
+  const projections = normalizeProjections(summary.projections)
   const vitals = toVitals(projections)
   const manualOrder = rowState?.manualOrder.get(summary.sessionId)
   return {

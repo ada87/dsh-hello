@@ -59,6 +59,10 @@ export interface WebServerService {
 
 export interface SessionSummary {
   sessionId: string
+  /**
+   * Last time the user prompted this Session. Renaming, pinning, archiving and
+   * assistant activity do not move it, so it is a stable sort/unread key.
+   */
   updatedAt: number
   running: boolean
   agentAvailable: boolean
@@ -67,6 +71,11 @@ export interface SessionSummary {
   origin?: 'subagent'
   cwd?: string
   formatStatus?: 'current' | 'migration-required'
+  /**
+   * Projections the Host attaches to the list row. Reading them here avoids a
+   * second round trip per Session; `projections()` returns the same record.
+   */
+  projections?: SessionProjectionsValue
 }
 
 export interface SessionListValue {

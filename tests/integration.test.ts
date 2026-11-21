@@ -110,6 +110,20 @@ before(async () => {
             blank: false,
             cwd: 'D:\\work',
             formatStatus: 'current' as const,
+            projections: {
+              kind: 'sequenced' as const,
+              asOfSeq: 0,
+              values: {
+                title: 'Test session',
+                todos: [{ content: 'do the thing', status: 'in_progress' }],
+                goal: null,
+                plan: { active: false, pending: false },
+                contextPressure: { projectedTokens: 50_000, contextWindow: 200_000 },
+                tokenUsage: { outputTokens: 1234 },
+                sessionStats: { turns: 3 },
+                modelSelection: { lastUsed: { provider: 'test', model: 'model-a' } },
+              },
+            },
           }],
         }
       },

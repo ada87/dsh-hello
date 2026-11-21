@@ -414,6 +414,14 @@ caller), because the settings page talks to it.
 | POST | `/debug/approval` | Debug-only synthetic approval (enableDebugRoutes) |
 | POST | `/debug/question` | Debug-only synthetic question (enableDebugRoutes) |
 
+`GET /sessions` returns rows already ordered by `updatedAt` (newest first).
+`updatedAt` is the Host's last-prompt time: renaming, pinning, archiving or
+assistant activity does not move it, so the phone can use it for sorting and
+unread watermarks without flicker. Titles and `vitals` come from the projections
+the Host attaches to each row, so a list costs one Host call rather than one per
+Session. The Host's list is not paginated; the phone searches the whole set
+locally, which is why this route deliberately returns every row.
+
 Admin page (browser session or loopback):
 
 | Method | Path | Purpose |
