@@ -214,6 +214,9 @@ main { max-width: var(--max); margin: 0 auto; padding: 0 24px 64px; }
 .legalContact p { margin: 2px 0; }
 .contactLabel { margin: 0 0 6px; color: var(--accent); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
 .legalNav { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 22px; font-size: 14px; }
+.legalTopNav { display: flex; gap: 14px; font-size: 13px; }
+.legalTopNav a { color: var(--muted); }
+.legalTopNav a:hover { color: var(--text); }
 
 @media (max-width: 900px) {
   .hero { grid-template-columns: 1fr; padding: 56px 0 36px; }
