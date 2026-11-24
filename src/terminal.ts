@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { StringDecoder } from 'node:string_decoder'
 import { HttpError } from './http.js'
 import type { HostContext, SubprocessService, SubprocessTerminalHandle } from './host.js'
-import type { TerminalInfo } from './protocol.js'
+import type { TerminalInfo, TerminalShell, TerminalShellsResponse } from './protocol.js'
 
 /** Keep at most this much rendered output per terminal for reconnects. */
 const MAX_BUFFER_CHARS = 200_000
@@ -58,6 +58,38 @@ export class TerminalManager {
     return this.subprocess() !== undefined
   }
 
+  /** Shell choices the Host can actually execute, plus its default. */
+  async shells(): Promise<TerminalShellsResponse> {
+    const subprocess = this.subprocess()
+    if (subprocess === undefined) {
+      throw new HttpError(501, 'terminal-unavailable', 'this dsh profile has no subprocess provider')
+    }
+    const signal = new AbortController().signal
+    const environment = await subprocess.terminalEnvironment(signal)
+    const candidates = environment.platform === 'windows'
+      ? ['cmd.exe', 'powershell', 'pwsh', 'bash']
+      : ['bash', 'sh', 'pwsh', 'zsh']
+    if (environment.defaultShell !== undefined && !candidates.includes(environment.defaultShell)) {
+      candidates.unshift(environment.defaultShell)
+    }
+    const shells: TerminalShell[] = []
+    const seen = new Set<string>()
+    for (const id of candidates) {
+      try {
+        const path = await subprocess.resolveExecutable(id, undefined, signal)
+        if (seen.has(path)) continue
+        seen.add(path)
+        const parts = id.split(/[\\/]/)
+        shells.push({ id, label: parts[parts.length - 1] ?? id, path })
+      } catch {
+        // A candidate that is not installed is simply absent from the menu.
+      }
+    }
+    const defaultShell = shells.find(shell =>
+      shell.id === environment.defaultShell || shell.path === environment.defaultShell)?.id ?? null
+    return { platform: environment.platform, defaultShell, shells }
+  }
+
   list(sessionId: string): TerminalInfo[] {
     return [...this.terminals.values()]
       .filter(record => record.info.sessionId === sessionId)
@@ -67,7 +99,7 @@ export class TerminalManager {
   async create(
     sessionId: string,
     cwd: string,
-    options: { cols?: number; rows?: number },
+    options: { cols?: number; rows?: number; shell?: string },
   ): Promise<{ info: TerminalInfo; buffer: string; truncated: boolean }> {
     const subprocess = this.subprocess()
     if (subprocess === undefined) {
@@ -81,8 +113,16 @@ export class TerminalManager {
 
     const signal = new AbortController().signal
     const environment = await subprocess.terminalEnvironment(signal)
-    const shellCandidate = environment.defaultShell ?? (environment.platform === 'windows' ? 'cmd.exe' : '/bin/bash')
-    const shell = await subprocess.resolveExecutable(shellCandidate, undefined, signal)
+    const shellCandidate = options.shell
+      ?? environment.defaultShell
+      ?? (environment.platform === 'windows' ? 'cmd.exe' : '/bin/bash')
+    let shell: string
+    try {
+      shell = await subprocess.resolveExecutable(shellCandidate, undefined, signal)
+    } catch (error) {
+      if (options.shell === undefined) throw error
+      throw new HttpError(400, 'terminal-shell-not-found', `shell "${options.shell}" is not available on this Host`)
+    }
     const handle = await subprocess.spawnTerminal({
       argv: [shell],
       cwd,

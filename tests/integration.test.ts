@@ -530,6 +530,36 @@ test('terminal routes create a PTY, stream output, take input and close it', asy
   }
 })
 
+test('terminal shell menu lists choices and explicit shell selection is used', async () => {
+  const headers = { authorization: `Bearer ${state.token}`, 'content-type': 'application/json' }
+  const menu = await fetch(`${state.base}/terminals/shells`, { headers })
+  assert.equal(menu.status, 200)
+  const menuBody = await menu.json() as {
+    platform: string
+    defaultShell: string | null
+    shells: Array<{ id: string; label: string; path: string }>
+  }
+  assert.equal(menuBody.platform, 'posix')
+  assert.equal(menuBody.defaultShell, '/bin/sh')
+  assert.ok(menuBody.shells.some(shell => shell.id === 'bash'))
+
+  const created = await fetch(`${state.base}/sessions/${sessionId}/terminals`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ cols: 80, rows: 20, shell: 'bash' }),
+  })
+  assert.equal(created.status, 201)
+  const createdBody = await created.json() as { info: { id: string; shell: string } }
+  assert.equal(createdBody.info.shell, 'bash')
+  assert.deepEqual(state.terminals.at(-1)?.spec.argv, ['bash'])
+
+  const closed = await fetch(`${state.base}/sessions/${sessionId}/terminals/${createdBody.info.id}`, {
+    method: 'DELETE',
+    headers,
+  })
+  assert.equal(closed.status, 204)
+})
+
 test('Host and Origin fences reject foreign authorities', async () => {
   const response = await rawRequest(`${state.base}/sessions`, {
     authorization: `Bearer ${state.token}`,

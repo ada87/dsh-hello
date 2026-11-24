@@ -193,6 +193,22 @@ export interface TerminalListResponse {
   items: TerminalInfo[]
 }
 
+/** One shell the Host can start, as reported by its subprocess provider. */
+export interface TerminalShell {
+  /** Stable choice passed back when creating a terminal, e.g. `bash` or `pwsh`. */
+  id: string
+  label: string
+  /** Absolute executable path resolved by the Host. */
+  path: string
+}
+
+export interface TerminalShellsResponse {
+  platform: 'posix' | 'windows'
+  /** Choice id matching the Host default, or null when none could be resolved. */
+  defaultShell: string | null
+  shells: TerminalShell[]
+}
+
 export interface SessionTranscriptResponse {
   sessionId: string
   title: string | null

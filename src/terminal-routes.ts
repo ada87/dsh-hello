@@ -7,6 +7,15 @@ import type { TerminalEvent } from './terminal.js'
 export function registerTerminalRoutes(router: HttpRouter, deps: RouteDependencies): void {
   router.add({
     method: 'GET',
+    pattern: '/terminals/shells',
+    auth: 'device',
+    handler: async (rc) => {
+      sendJson(rc.res, 200, await deps.terminals.shells())
+    },
+  })
+
+  router.add({
+    method: 'GET',
     pattern: '/sessions/:id/terminals',
     auth: 'device',
     handler: (rc) => {
@@ -20,7 +29,7 @@ export function registerTerminalRoutes(router: HttpRouter, deps: RouteDependenci
     auth: 'device',
     handler: async (rc) => {
       const sessionId = rc.params.id!
-      const body = rc.body as { cols?: unknown; rows?: unknown } | undefined
+      const body = rc.body as { cols?: unknown; rows?: unknown; shell?: unknown } | undefined
       const state = await deps.sessions.state(sessionId, rc.signal)
       const cwd = state.session.cwd
       if (typeof cwd !== 'string' || cwd.length === 0) {
@@ -29,6 +38,7 @@ export function registerTerminalRoutes(router: HttpRouter, deps: RouteDependenci
       const created = await deps.terminals.create(sessionId, cwd, {
         ...(typeof body?.cols === 'number' ? { cols: body.cols } : {}),
         ...(typeof body?.rows === 'number' ? { rows: body.rows } : {}),
+        ...(typeof body?.shell === 'string' && body.shell.trim().length > 0 ? { shell: body.shell.trim() } : {}),
       })
       sendJson(rc.res, 201, created)
     },
