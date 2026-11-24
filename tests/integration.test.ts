@@ -540,8 +540,12 @@ test('terminal shell menu lists choices and explicit shell selection is used', a
     shells: Array<{ id: string; label: string; path: string }>
   }
   assert.equal(menuBody.platform, 'posix')
-  assert.equal(menuBody.defaultShell, '/bin/sh')
+  assert.equal(menuBody.defaultShell, 'sh')
   assert.ok(menuBody.shells.some(shell => shell.id === 'bash'))
+  // The Host's default may be an absolute path; it must not also appear as a
+  // second entry under its bare name.
+  const ids = menuBody.shells.map(shell => shell.id)
+  assert.deepEqual(ids, [...new Set(ids)])
 
   const created = await fetch(`${state.base}/sessions/${sessionId}/terminals`, {
     method: 'POST',

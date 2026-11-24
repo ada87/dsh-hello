@@ -69,24 +69,38 @@ export class TerminalManager {
     const candidates = environment.platform === 'windows'
       ? ['cmd.exe', 'powershell', 'pwsh', 'bash']
       : ['bash', 'sh', 'pwsh', 'zsh']
-    if (environment.defaultShell !== undefined && !candidates.includes(environment.defaultShell)) {
-      candidates.unshift(environment.defaultShell)
-    }
     const shells: TerminalShell[] = []
     const seen = new Set<string>()
-    for (const id of candidates) {
+    /** `/bin/bash` and `bash` are the same shell; key on the resolved path. */
+    const remember = async (id: string): Promise<string | null> => {
       try {
         const path = await subprocess.resolveExecutable(id, undefined, signal)
-        if (seen.has(path)) continue
-        seen.add(path)
-        const parts = id.split(/[\\/]/)
-        shells.push({ id, label: parts[parts.length - 1] ?? id, path })
+        const key = environment.platform === 'windows' ? path.toLowerCase() : path
+        if (seen.has(key)) return null
+        seen.add(key)
+        return path
       } catch {
-        // A candidate that is not installed is simply absent from the menu.
+        return null
       }
     }
-    const defaultShell = shells.find(shell =>
-      shell.id === environment.defaultShell || shell.path === environment.defaultShell)?.id ?? null
+
+    let defaultShell: string | null = null
+    if (environment.defaultShell !== undefined) {
+      const path = await remember(environment.defaultShell)
+      if (path !== null) {
+        const parts = environment.defaultShell.split(/[\\/]/)
+        defaultShell = parts[parts.length - 1] ?? environment.defaultShell
+        // The Host may report an absolute path; keep the raw path as the way
+        // to start it, but hand clients the short name they can send back.
+        shells.push({ id: defaultShell, label: defaultShell, path })
+      }
+    }
+    for (const id of candidates) {
+      if (id === defaultShell) continue
+      const path = await remember(id)
+      if (path === null) continue
+      shells.push({ id, label: id, path })
+    }
     return { platform: environment.platform, defaultShell, shells }
   }
 
